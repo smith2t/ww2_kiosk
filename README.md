@@ -138,4 +138,4 @@ MIT License - See LICENSE file for details
 
 ## Support
 
-For issues or questions, please open an issue on GitHub.
+For issues or questions, please open an issue on GitHub.Repository setup complete
