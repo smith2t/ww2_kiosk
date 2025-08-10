@@ -41,12 +41,23 @@ sudo systemctl stop dnsmasq
 # Create project directory
 echo "Creating project directory..."
 PROJECT_DIR="/home/pi/ww2_kiosk"
-sudo mkdir -p $PROJECT_DIR
-sudo chown -R pi:pi $PROJECT_DIR
+CURRENT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Copy project files
-echo "Copying project files..."
-cp -r ../* $PROJECT_DIR/
+# Check if we're already in the target directory
+if [ "$CURRENT_DIR" = "$PROJECT_DIR" ]; then
+    echo "Already in target directory: $PROJECT_DIR"
+else
+    echo "Setting up project in: $PROJECT_DIR"
+    sudo mkdir -p $PROJECT_DIR
+    sudo chown -R pi:pi $PROJECT_DIR
+    
+    # Copy project files (excluding the target directory itself)
+    echo "Copying project files..."
+    rsync -av --exclude="$PROJECT_DIR" "$CURRENT_DIR/" "$PROJECT_DIR/" || {
+        # Fallback to cp if rsync not available
+        cp -r "$CURRENT_DIR"/* "$PROJECT_DIR/" 2>/dev/null || true
+    }
+fi
 
 # Create Python virtual environment
 echo "Creating Python virtual environment..."
