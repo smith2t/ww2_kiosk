@@ -66,17 +66,29 @@ mkdir -p $PROJECT_DIR/media/pictures
 
 # Set up configuration
 echo "Setting up configuration..."
-./scripts/configure_boot.sh
+if [ -x "$PROJECT_DIR/scripts/configure_boot.sh" ]; then
+    $PROJECT_DIR/scripts/configure_boot.sh
+else
+    echo "Warning: configure_boot.sh not found or not executable"
+fi
 
 # Install systemd service
 echo "Installing systemd service..."
-sudo cp systemd/ww2-kiosk.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable ww2-kiosk.service
+if [ -f "$PROJECT_DIR/systemd/ww2-kiosk.service" ]; then
+    sudo cp $PROJECT_DIR/systemd/ww2-kiosk.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable ww2-kiosk.service
+else
+    echo "Warning: systemd service file not found"
+fi
 
 # Configure network
 echo "Configuring network..."
-./scripts/configure_network.sh
+if [ -x "$PROJECT_DIR/scripts/configure_network.sh" ]; then
+    $PROJECT_DIR/scripts/configure_network.sh
+else
+    echo "Warning: configure_network.sh not found or not executable"
+fi
 
 echo "================================"
 echo "Setup complete!"
