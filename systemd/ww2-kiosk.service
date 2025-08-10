@@ -1,0 +1,20 @@
+[Unit]
+Description=WW2 Kiosk Application
+After=multi-user.target graphical.target network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/ww2_kiosk
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/pi/.Xauthority"
+Environment="PATH=/home/pi/ww2_kiosk/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/pi/ww2_kiosk/venv/bin/python /home/pi/ww2_kiosk/src/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

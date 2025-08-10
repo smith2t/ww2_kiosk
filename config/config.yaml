@@ -1,0 +1,30 @@
+display:
+  fullscreen: true
+  width: 1920
+  height: 1080
+  slideshow_interval: 10  # seconds between images
+  transition_duration: 1.0  # fade transition time
+  shuffle_slideshow: true
+  idle_timeout: 30  # seconds before returning to slideshow
+  video_player: vlc  # vlc or omxplayer
+
+input:
+  button1_pin: 17  # GPIO pin for button 1
+  button2_pin: 27  # GPIO pin for button 2
+  button3_pin: 22  # GPIO pin for button 3
+  button4_pin: 23  # GPIO pin for button 4
+  debounce_time: 50  # milliseconds
+
+media:
+  base_dir: /home/pi/ww2_kiosk/media
+  videos_dir: /home/pi/ww2_kiosk/media/videos
+  pictures_dir: /home/pi/ww2_kiosk/media/pictures
+
+network:
+  enable_ap: true
+  ap_ssid: WW2-Kiosk-AP
+  ap_password: ww2kiosk2024
+  ap_interface: wlan0
+  enable_smb: true
+  smb_username: kiosk
+  smb_password: kiosk123
