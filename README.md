@@ -84,9 +84,15 @@ Edit `/home/pi/ww2_kiosk/config/button_mappings.json` to map buttons to specific
 - IP: `192.168.4.1`
 
 ### SMB File Share
-- Path: `\\192.168.4.1\media`
-- Username: `kiosk`
-- Password: `kiosk123`
+- Path: `smb://192.168.4.1/media` (Mac) or `\\192.168.4.1\media` (Windows)
+- Connect as: Guest (no password) or
+- Username: `pi`
+- Password: `raspberry`
+
+#### Mac Connection:
+1. Press Cmd+K in Finder
+2. Enter: `smb://192.168.4.1/media`
+3. Select "Guest" or use credentials above
 
 ## Development
 

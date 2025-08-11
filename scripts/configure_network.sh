@@ -60,27 +60,39 @@ sudo bash -c 'cat > /etc/samba/smb.conf << EOF
    security = user
    map to guest = Bad User
    dns proxy = no
+   min protocol = SMB2
+   ntlm auth = yes
    
 [media]
    comment = WW2 Kiosk Media Files
    path = /home/pi/ww2_kiosk/media
    browseable = yes
    read only = no
-   guest ok = no
-   valid users = kiosk
-   create mask = 0755
-   directory mask = 0755
+   guest ok = yes
+   force user = pi
+   force group = pi
+   create mask = 0775
+   directory mask = 0775
+   public = yes
 EOF'
 
-# Create SMB user
-echo "Creating SMB user..."
-sudo useradd -M -s /sbin/nologin kiosk 2>/dev/null || true
-echo -e "kiosk123\nkiosk123" | sudo smbpasswd -a -s kiosk
-sudo smbpasswd -e kiosk
+# Create SMB user (using pi user for simplicity)
+echo "Setting up SMB access..."
+# Add pi user to smbpasswd if not already there
+sudo smbpasswd -x pi 2>/dev/null || true
+echo -e "raspberry\nraspberry" | sudo smbpasswd -a -s pi
+sudo smbpasswd -e pi
 
-# Set permissions
-sudo chown -R pi:pi /home/pi/ww2_kiosk/media
-sudo chmod -R 755 /home/pi/ww2_kiosk/media
+# Also create kiosk user as alternative
+sudo useradd -M -s /sbin/nologin kiosk 2>/dev/null || true
+echo -e "kiosk123\nkiosk123" | sudo smbpasswd -a -s kiosk 2>/dev/null || true
+sudo smbpasswd -e kiosk 2>/dev/null || true
+
+# Set permissions - make sure pi owns the media directory
+sudo mkdir -p /home/pi/ww2_kiosk/media/videos
+sudo mkdir -p /home/pi/ww2_kiosk/media/pictures
+sudo chown -R pi:pi /home/pi/ww2_kiosk
+sudo chmod -R 775 /home/pi/ww2_kiosk/media
 
 # Enable services
 echo "Enabling network services..."
