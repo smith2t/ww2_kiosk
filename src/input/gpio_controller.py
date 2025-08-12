@@ -1,34 +1,33 @@
 import asyncio
 import logging
 import time
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 try:
-    import RPi.GPIO as GPIO
+    # Use gpiozero - works on Pi 5 and older models
+    from gpiozero import Button
+    from gpiozero.exc import GPIOZeroError
+    GPIO_AVAILABLE = True
 except ImportError:
-    # Mock GPIO for development on non-Raspberry Pi systems
     logger = logging.getLogger(__name__)
-    logger.warning("RPi.GPIO not available, using mock GPIO")
+    logger.warning("gpiozero not available, using mock GPIO")
+    GPIO_AVAILABLE = False
     
-    class MockGPIO:
-        BCM = "BCM"
-        IN = "IN"
-        PUD_UP = "PUD_UP"
-        FALLING = "FALLING"
-        
-        @staticmethod
-        def setmode(mode): pass
-        
-        @staticmethod
-        def setup(pin, direction, pull_up_down=None): pass
-        
-        @staticmethod
-        def add_event_detect(pin, edge, callback=None, bouncetime=None): pass
-        
-        @staticmethod
-        def cleanup(): pass
-    
-    GPIO = MockGPIO()
+    class Button:
+        """Mock Button class for development"""
+        def __init__(self, pin, pull_up=True, bounce_time=None):
+            self.pin = pin
+            
+        @property
+        def when_pressed(self):
+            return None
+            
+        @when_pressed.setter
+        def when_pressed(self, callback):
+            pass
+            
+        def close(self):
+            pass
 
 from .button_mapper import ButtonMapper
 from .debouncer import Debouncer
@@ -53,47 +52,60 @@ class GPIOController:
             4: settings.input.button4_pin,
         }
         
+        # Store button objects for cleanup
+        self.buttons = {}
+        
     async def initialize(self):
         """Initialize GPIO pins"""
-        logger.info("Initializing GPIO controller")
+        logger.info("Initializing GPIO controller (Pi 5 compatible)")
+        
+        if not GPIO_AVAILABLE:
+            logger.warning("GPIO not available - running in mock mode")
+            return
         
         try:
-            # Set GPIO mode
-            GPIO.setmode(GPIO.BCM)
-            
-            # Setup button pins
+            # Setup button pins using gpiozero
             for button_id, pin in self.button_pins.items():
                 if pin is not None:
                     self._setup_button(button_id, pin)
                     
-            logger.info(f"Initialized {len(self.button_pins)} buttons")
+            logger.info(f"Initialized {len(self.buttons)} buttons")
             
         except Exception as e:
             logger.error(f"Failed to initialize GPIO: {e}")
-            raise
+            logger.error("Make sure gpiozero is installed: pip install gpiozero")
+            # Don't raise - allow kiosk to run without GPIO
             
     def _setup_button(self, button_id: int, pin: int):
         """Setup a single button pin"""
         logger.debug(f"Setting up button {button_id} on GPIO {pin}")
         
-        # Configure pin as input with pull-up resistor
-        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        try:
+            # Create button with pull-up and debounce
+            button = Button(
+                pin, 
+                pull_up=True, 
+                bounce_time=self.settings.input.debounce_time / 1000.0  # Convert ms to seconds
+            )
+            
+            # Set callback for button press
+            button.when_pressed = lambda: self._button_callback(button_id, pin)
+            
+            # Store button object
+            self.buttons[button_id] = button
+            
+            logger.info(f"Button {button_id} configured on GPIO {pin}")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup button {button_id} on GPIO {pin}: {e}")
         
-        # Add falling edge detection (button press)
-        GPIO.add_event_detect(
-            pin,
-            GPIO.FALLING,
-            callback=lambda channel: self._button_callback(button_id, channel),
-            bouncetime=self.settings.input.debounce_time
-        )
-        
-    def _button_callback(self, button_id: int, channel: int):
+    def _button_callback(self, button_id: int, pin: int):
         """Handle button press interrupt"""
-        # Check debouncer
+        # Check debouncer (additional software debounce)
         if not self.debouncer.should_process(button_id):
             return
             
-        logger.info(f"Button {button_id} pressed (GPIO {channel})")
+        logger.info(f"Button {button_id} pressed (GPIO {pin})")
         
         # Call the registered callback
         if self.on_button_press:
@@ -102,4 +114,9 @@ class GPIOController:
     async def cleanup(self):
         """Clean up GPIO resources"""
         logger.info("Cleaning up GPIO controller")
-        GPIO.cleanup()
+        for button_id, button in self.buttons.items():
+            try:
+                button.close()
+            except:
+                pass
+        self.buttons.clear()

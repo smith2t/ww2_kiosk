@@ -68,6 +68,15 @@ source venv/bin/activate
 # Install Python dependencies
 echo "Installing Python dependencies..."
 pip install --upgrade pip
+
+# Check for Raspberry Pi 5 and install appropriate GPIO library
+if grep -q "Raspberry Pi 5" /proc/device-tree/model 2>/dev/null; then
+    echo "Detected Raspberry Pi 5 - using gpiozero"
+    pip install gpiozero lgpio
+else
+    echo "Installing standard GPIO library"
+fi
+
 pip install -r requirements.txt
 
 # Create media directories
