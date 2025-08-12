@@ -2,24 +2,28 @@
 
 # Configure network settings for WiFi AP and SMB
 
-set -e
-
 echo "Configuring network settings..."
 
-# Configure dhcpcd to ignore wlan0
-echo "Configuring dhcpcd..."
-sudo bash -c 'echo "denyinterfaces wlan0" >> /etc/dhcpcd.conf'
+# Stop any conflicting services first
+echo "Stopping conflicting services..."
+sudo systemctl stop hostapd 2>/dev/null || true
+sudo systemctl stop dnsmasq 2>/dev/null || true
+sudo systemctl stop wpa_supplicant 2>/dev/null || true
 
-# Configure static IP for wlan0
-echo "Setting static IP for wlan0..."
-sudo bash -c 'cat > /etc/network/interfaces.d/wlan0 << EOF
-allow-hotplug wlan0
-iface wlan0 inet static
-    address 192.168.4.1
-    netmask 255.255.255.0
-    network 192.168.4.0
-    broadcast 192.168.4.255
-EOF'
+# Configure dhcpcd to ignore wlan0 (only if not already configured)
+echo "Configuring dhcpcd..."
+if ! grep -q "denyinterfaces wlan0" /etc/dhcpcd.conf 2>/dev/null; then
+    echo "Adding wlan0 to denyinterfaces..."
+    echo "" | sudo tee -a /etc/dhcpcd.conf > /dev/null
+    echo "# Prevent dhcpcd from managing wlan0 (for AP mode)" | sudo tee -a /etc/dhcpcd.conf > /dev/null
+    echo "denyinterfaces wlan0" | sudo tee -a /etc/dhcpcd.conf > /dev/null
+else
+    echo "dhcpcd already configured to ignore wlan0"
+fi
+
+# Remove old network interface configuration (not needed with systemd)
+echo "Cleaning old network configurations..."
+sudo rm -f /etc/network/interfaces.d/wlan0 2>/dev/null || true
 
 # Configure hostapd
 echo "Configuring hostapd..."
@@ -40,16 +44,43 @@ wpa_pairwise=TKIP
 rsn_pairwise=CCMP
 EOF'
 
-# Point hostapd to config file
-sudo bash -c 'echo "DAEMON_CONF=\"/etc/hostapd/hostapd.conf\"" >> /etc/default/hostapd'
+# Point hostapd to config file (replace instead of append)
+sudo bash -c 'echo "DAEMON_CONF=\"/etc/hostapd/hostapd.conf\"" > /etc/default/hostapd'
 
 # Configure dnsmasq
 echo "Configuring dnsmasq..."
-sudo mv /etc/dnsmasq.conf /etc/dnsmasq.conf.orig
+if [ -f /etc/dnsmasq.conf ] && [ ! -f /etc/dnsmasq.conf.orig ]; then
+    sudo mv /etc/dnsmasq.conf /etc/dnsmasq.conf.orig
+fi
 sudo bash -c 'cat > /etc/dnsmasq.conf << EOF
 interface=wlan0
+bind-interfaces
 dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
+domain=local
+address=/kiosk.local/192.168.4.1
 EOF'
+
+# Create systemd service for network setup (instead of using interfaces.d)
+echo "Creating AP network setup service..."
+sudo bash -c 'cat > /etc/systemd/system/ap-network-setup.service << EOF
+[Unit]
+Description=Access Point Network Setup
+Before=hostapd.service
+After=sys-subsystem-net-devices-wlan0.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c "ip link set wlan0 up && ip addr add 192.168.4.1/24 dev wlan0"
+ExecStop=/bin/bash -c "ip addr flush dev wlan0 && ip link set wlan0 down"
+
+[Install]
+WantedBy=multi-user.target
+EOF'
+
+# Enable the AP network setup service
+sudo systemctl daemon-reload
+sudo systemctl enable ap-network-setup.service
 
 # Configure Samba
 echo "Configuring Samba..."
