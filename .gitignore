@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+logs/
+*.log
+
+# Local Claude settings (per-machine)
+.claude/settings.local.json
+
+# Media files are managed via SMB, not git
+media/videos/*
+media/pictures/*
+!media/videos/.gitkeep
+!media/pictures/.gitkeep

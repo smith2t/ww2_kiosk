@@ -1,0 +1,35 @@
+display:
+  fullscreen: true
+  width: 1920
+  height: 1080
+  slideshow_interval: 10  # seconds between images
+  transition_duration: 1.0  # fade transition time
+  shuffle_slideshow: true
+  idle_timeout: 30  # seconds before returning to slideshow
+  video_player: vlc  # omxplayer (hardware accel) or vlc
+  # LED pins for button feedback and boot indicators (using lower physical pins 16,18,22,24)
+  led1_pin: 78   # GPIO 78 (Physical pin 16, BCM 23 equivalent)
+  led2_pin: 226  # GPIO 226 (Physical pin 18, BCM 24 equivalent)
+  led3_pin: 227  # GPIO 227 (Physical pin 22, BCM 25 equivalent)
+  led4_pin: 228  # GPIO 228 (Physical pin 24, BCM 8 equivalent)
+
+input:
+  button1_pin: 229  # GPIO 229 (Physical pin 11, BCM 17 equivalent)
+  button2_pin: 230  # GPIO 230 (Physical pin 12, BCM 18 equivalent)
+  button3_pin: 231  # GPIO 231 (Physical pin 13, BCM 27 equivalent)
+  button4_pin: 232  # GPIO 232 (Physical pin 15, BCM 22 equivalent)
+  debounce_time: 50  # milliseconds
+
+media:
+  base_dir: /home/orangepi/ww2_kiosk-main/media
+  videos_dir: /home/orangepi/ww2_kiosk-main/media/videos
+  pictures_dir: /home/orangepi/ww2_kiosk-main/media/pictures
+
+network:
+  enable_ap: true
+  ap_ssid: WW2-Kiosk-AP
+  ap_password: ww2kiosk2024
+  ap_interface: wlan0
+  enable_smb: true
+  smb_username: kiosk
+  smb_password: kiosk123
