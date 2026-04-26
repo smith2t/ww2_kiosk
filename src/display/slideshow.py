@@ -170,33 +170,43 @@ class Slideshow:
         return temp_path
 
     async def start(self):
-        """Start the slideshow"""
-        if not self.slides:
-            logger.warning("No slides available for slideshow")
-            await self.show_default_screen()
-            return
+        """Start the slideshow loop.
 
+        Always launches the loop — it re-scans the media directory each time it
+        wraps, so newly uploaded files appear automatically and a fresh Pi with
+        no media yet recovers as soon as the user uploads something.
+        """
         self.running = True
         asyncio.create_task(self._slideshow_loop())
-        
+
     async def _slideshow_loop(self):
-        """Main slideshow loop"""
+        """Main slideshow loop. Re-scans on cycle wrap to pick up new uploads."""
         while self.running:
             try:
-                # Display current slide
-                await self.display_slide(self.slides[self.current_image_index])
+                if not self.slides:
+                    # Nothing to show — splash, wait, re-scan, try again
+                    await self.show_default_screen()
+                    await asyncio.sleep(self.interval)
+                    await self.load_slides()
+                    continue
 
-                # Wait for interval
+                # Clamp in case files were deleted since last scan
+                if self.current_image_index >= len(self.slides):
+                    self.current_image_index = 0
+
+                await self.display_slide(self.slides[self.current_image_index])
                 await asyncio.sleep(self.interval)
 
-                # Move to next slide
-                self.current_image_index = (self.current_image_index + 1) % len(self.slides)
-                
-                # Handle pygame events
+                self.current_image_index += 1
+                if self.current_image_index >= len(self.slides):
+                    # Wrapped — re-scan so newly uploaded files appear in the next cycle
+                    await self.load_slides()
+                    self.current_image_index = 0
+
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self.running = False
-                        
+
             except Exception as e:
                 logger.error(f"Error in slideshow loop: {e}")
                 await asyncio.sleep(1)
@@ -212,9 +222,13 @@ class Slideshow:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
                 
-            # Scale to fit screen while maintaining aspect ratio
-            screen_size = self.screen.get_size()
-            img.thumbnail(screen_size, Image.Resampling.LANCZOS)
+            # Scale to fit screen while maintaining aspect ratio.
+            # PIL.Image.thumbnail only shrinks — use ratio math so small images
+            # are also enlarged to fill the screen.
+            screen_w, screen_h = self.screen.get_size()
+            ratio = min(screen_w / img.width, screen_h / img.height)
+            new_size = (max(1, int(img.width * ratio)), max(1, int(img.height * ratio)))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
             
             # Convert to pygame surface
             img_surface = pygame.image.fromstring(
@@ -222,8 +236,8 @@ class Slideshow:
             )
             
             # Center image on screen
-            x = (screen_size[0] - img.size[0]) // 2
-            y = (screen_size[1] - img.size[1]) // 2
+            x = (screen_w - img.size[0]) // 2
+            y = (screen_h - img.size[1]) // 2
             
             # Clear screen and display image
             self.screen.fill((0, 0, 0))

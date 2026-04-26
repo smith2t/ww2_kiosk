@@ -1,5 +1,5 @@
 display:
-  fullscreen: false  # Set to false for testing
+  fullscreen: true  # Kiosk mode
   width: 1920
   height: 1080
   slideshow_interval: 10  # seconds between images
@@ -17,7 +17,8 @@ input:
   # Button pins - ACTIVE wiring (move Button4 from Pin8 to Pin11!)
   button1_pin: 264  # GPIO 264 (Physical Pin 3)  - Button 1
   button2_pin: 263  # GPIO 263 (Physical Pin 5)  - Button 2
-  button3_pin: 269  # GPIO 269 (Physical Pin 7)  - Button 3
+  button3_pin: null  # GPIO 269 (Physical Pin 7) DISABLED — phantom presses; re-enable after wiring fix
+  # button3_pin: 269
   button4_pin: 226  # GPIO 226 (Physical Pin 11) - Button 4 *** MOVE WIRE FROM PIN 8 TO PIN 11 ***
   debounce_time: 50  # milliseconds
 
@@ -27,10 +28,17 @@ media:
   pictures_dir: /home/orangepi/ww2_kiosk-main/media/pictures
 
 network:
-  enable_ap: true
+  # AP mode disabled during dev — fights NetworkManager and the dev Mac needs
+  # the Pi reachable on the home WiFi. Re-enable for field deployment, but
+  # network management should be moved out of the app first (see Tier 2).
+  enable_ap: false
   ap_ssid: WW2-Kiosk-AP
   ap_password: ww2kiosk2024
   ap_interface: wlan0
-  enable_smb: true
+  enable_smb: false
   smb_username: kiosk
   smb_password: kiosk123
+  # Web management UI (Flask) — used for uploading media from a browser.
+  enable_web: true
+  web_host: 0.0.0.0
+  web_port: 8080

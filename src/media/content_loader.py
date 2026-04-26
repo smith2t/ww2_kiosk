@@ -99,8 +99,7 @@ class ContentLoader:
         
     def get_video_for_button(self, button_id: int) -> Optional[str]:
         """Get video path for a button press"""
-        # First check button mappings
-        from ..input.button_mapper import ButtonMapper
+        from input.button_mapper import ButtonMapper
         mapper = ButtonMapper(self.settings)
         return mapper.get_video_for_button(button_id)
         
