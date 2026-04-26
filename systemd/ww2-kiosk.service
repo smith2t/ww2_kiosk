@@ -1,20 +1,25 @@
 [Unit]
 Description=WW2 Kiosk Application
-After=multi-user.target graphical.target network.target
+After=network.target lightdm.service
+Wants=lightdm.service
 
 [Service]
 Type=simple
-User=pi
-Group=pi
-WorkingDirectory=/home/pi/ww2_kiosk
-Environment="DISPLAY=:0"
-Environment="XAUTHORITY=/home/pi/.Xauthority"
-Environment="PATH=/home/pi/ww2_kiosk/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/home/pi/ww2_kiosk/venv/bin/python /home/pi/ww2_kiosk/src/main.py
+User=orangepi
+WorkingDirectory=/home/orangepi/ww2_kiosk-main
+Environment=PATH=/home/orangepi/ww2_kiosk-main/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/var/run/lightdm/root/:0
+Environment=PULSE_RUNTIME_PATH=/run/user/1000/pulse
+# Wait for the X server on :0 to actually accept connections before launching
+# pygame. Without this, the kiosk service can race ahead of lightdm/Xorg and
+# pygame tries to draw to a display that does not yet exist.
+ExecStartPre=/bin/bash -c "for i in $(seq 1 30); do xset -display :0 q >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1"
+ExecStart=/home/orangepi/ww2_kiosk-main/venv/bin/python src/main.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
