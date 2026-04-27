@@ -123,8 +123,11 @@ class OrangePiButton:
         self.callback = None
         self.monitoring = False
         self.last_state = None
-        self.debounce_time = 0.05  # 50ms debounce
+        self.debounce_time = 0.3  # 300ms — arcade microswitches bounce for
+                                  # ~50-150ms after each physical press; 50ms
+                                  # let through dozens of events per real press
         self.last_press_time = 0
+        self._monitor_task = None  # Strong ref so asyncio doesn't GC the task
 
     def setup(self) -> bool:
         """Setup the button GPIO"""
@@ -150,40 +153,76 @@ class OrangePiButton:
             return False
 
     async def start_monitoring(self):
-        """Start monitoring button presses"""
+        """Start monitoring button presses.
+
+        Saves a strong reference to the task — asyncio holds only weak refs and
+        will garbage-collect orphan tasks. Without this, the monitor catches
+        only the boot transient and then dies, looking exactly like what we hit:
+        wiring works, GPIO reads work, but real presses are never logged.
+        """
         if not self.monitoring:
             self.monitoring = True
-            asyncio.create_task(self._monitor_button())
+            self._monitor_task = asyncio.create_task(self._monitor_button())
 
     async def _monitor_button(self):
-        """Monitor button state changes"""
-        while self.monitoring:
+        """Monitor button state changes.
+
+        Holds the sysfs value file open for the lifetime of the monitor and
+        seeks to 0 each loop. Re-opening the file on every poll (the previous
+        approach) was unreliable on this kernel — reads occasionally returned
+        stale values, which left last_state out of sync with the real pin and
+        caused the monitor to silently miss real button presses after the
+        first few events.
+        """
+        loop_count = 0
+        last_heartbeat = time.time()
+        value_path = f"/sys/class/gpio/gpio{self.pin}/value"
+        try:
+            value_fd = open(value_path, 'r')
+        except Exception as e:
+            logger.error(f"Cannot open {value_path}: {e}")
+            return
+
+        try:
+            while self.monitoring:
+                try:
+                    value_fd.seek(0)
+                    current_state = int(value_fd.read().strip())
+                    current_time = time.time()
+
+                    # Heartbeat every 30s so we can see the loop is alive
+                    if current_time - last_heartbeat > 30:
+                        logger.debug(f"Monitor pin {self.pin} alive: state={current_state} loops={loop_count}")
+                        last_heartbeat = current_time
+
+                    # Check for state change (button press, falling edge)
+                    if (current_state != self.last_state and
+                        current_state == 0 and
+                        current_time - self.last_press_time > self.debounce_time):
+
+                        self.last_press_time = current_time
+                        if self.callback:
+                            try:
+                                if asyncio.iscoroutinefunction(self.callback):
+                                    await self.callback()
+                                else:
+                                    self.callback()
+                            except Exception as e:
+                                logger.error(f"Error in button callback for pin {self.pin}: {e}")
+
+                    self.last_state = current_state
+                    loop_count += 1
+                    await asyncio.sleep(0.01)
+
+                except Exception as e:
+                    logger.error(f"Error monitoring button {self.pin}: {e}")
+                    await asyncio.sleep(0.1)
+        finally:
             try:
-                current_state = self.gpio.read_value(self.pin)
-                current_time = time.time()
-
-                # Check for state change (button press)
-                if (current_state is not None and
-                    current_state != self.last_state and
-                    current_state == 0 and  # Falling edge (button pressed)
-                    current_time - self.last_press_time > self.debounce_time):
-
-                    self.last_press_time = current_time
-                    if self.callback:
-                        try:
-                            if asyncio.iscoroutinefunction(self.callback):
-                                await self.callback()
-                            else:
-                                self.callback()
-                        except Exception as e:
-                            logger.error(f"Error in button callback: {e}")
-
-                self.last_state = current_state
-                await asyncio.sleep(0.01)  # Check every 10ms
-
-            except Exception as e:
-                logger.error(f"Error monitoring button {self.pin}: {e}")
-                await asyncio.sleep(0.1)
+                value_fd.close()
+            except Exception:
+                pass
+            logger.warning(f"Monitor for pin {self.pin} exited (monitoring={self.monitoring}, loops={loop_count})")
 
     def set_callback(self, callback: Callable):
         """Set the callback function for button press"""

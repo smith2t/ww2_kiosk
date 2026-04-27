@@ -102,14 +102,19 @@ class LEDController:
         return False
 
     async def _set_led(self, led_id: int, state: bool) -> bool:
-        """Set LED state (on/off)"""
+        """Set LED state (on/off).
+
+        Writes directly to sysfs and trusts _write_value's file-exists check.
+        Previously gated on self.exported_pins, but that in-memory set falls
+        out of sync with reality when input.led_controller exports the pin
+        after we tried and failed — leaving the LED silently dark forever.
+        """
         if led_id in self.led_pins:
             pin = self.led_pins[led_id]
-            if pin in self.exported_pins:
-                success = await self._write_value(pin, 1 if state else 0)
-                if success:
-                    self.led_states[led_id] = state
-                return success
+            success = await self._write_value(pin, 1 if state else 0)
+            if success:
+                self.led_states[led_id] = state
+            return success
         return False
 
     async def set_led(self, led_id: int, state: bool):

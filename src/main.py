@@ -41,6 +41,10 @@ class WW2Kiosk:
         self.ap_manager = None
         self.smb_server = None
         self.web_interface = None
+        # Strong refs for long-running asyncio tasks. Without these, asyncio
+        # holds only weak refs and may garbage-collect them mid-execution —
+        # symptom: LED animations and the slideshow indicator silently die.
+        self._bg_tasks = set()
 
         # Thread locking for button presses (inspired by rpi-vidlooper)
         self.button_lock = threading.Lock()
@@ -55,8 +59,10 @@ class WW2Kiosk:
             # Initialize LED controller first for boot sequence
             self.led_controller = LEDController(self.settings)
             if await self.led_controller.initialize():
-                # Start boot sequence in background
-                asyncio.create_task(self.led_controller.boot_sequence())
+                # Start boot sequence in background (keep ref so it isn't GC'd)
+                t = asyncio.create_task(self.led_controller.boot_sequence())
+                self._bg_tasks.add(t)
+                t.add_done_callback(self._bg_tasks.discard)
                 await self.led_controller.progress_indicator("Starting initialization", 6, 1)
 
             # Load media content
@@ -165,9 +171,11 @@ class WW2Kiosk:
             # Start slideshow by default
             await self.display_controller.start_slideshow()
 
-            # Start slideshow LED indicator
+            # Start slideshow LED indicator (keep ref so asyncio doesn't GC it)
             if self.led_controller:
-                asyncio.create_task(self.led_controller.slideshow_mode_indicator())
+                t = asyncio.create_task(self.led_controller.slideshow_mode_indicator())
+                self._bg_tasks.add(t)
+                t.add_done_callback(self._bg_tasks.discard)
 
             # Main event loop
             while self.running:
@@ -179,7 +187,9 @@ class WW2Kiosk:
                     # Restart slideshow LED indicator
                     if self.led_controller:
                         await self.led_controller.stop_animations()
-                        asyncio.create_task(self.led_controller.slideshow_mode_indicator())
+                        t = asyncio.create_task(self.led_controller.slideshow_mode_indicator())
+                        self._bg_tasks.add(t)
+                        t.add_done_callback(self._bg_tasks.discard)
                     
         except Exception as e:
             logger.error(f"Runtime error: {e}")
