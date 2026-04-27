@@ -18,6 +18,22 @@ class WebInterface:
         self.settings = settings
         self.app = Flask(__name__)
         self.app.secret_key = 'ww2-kiosk-secret-key'  # TODO: Make this configurable
+        # Allow up to 5 GB per request (large video bundles); werkzeug's default
+        # silently rejects over-size multipart bodies with HTTP 400.
+        self.app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024 * 1024
+
+        @self.app.errorhandler(413)
+        def too_large(e):
+            flash('Upload too large (5 GB max). Try fewer files at once.')
+            return redirect(url_for('upload'))
+
+        @self.app.errorhandler(400)
+        def bad_request(e):
+            flash(f'Upload failed (HTTP 400): {e.description or "malformed request"}. '
+                  'Often caused by a network drop mid-upload — try fewer/smaller '
+                  'files or use a wired connection.')
+            return redirect(url_for('upload'))
+
         self.setup_routes()
         self.media_dir = Path(settings.media.pictures_dir)
         self.video_dir = Path(settings.media.videos_dir)

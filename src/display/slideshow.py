@@ -187,7 +187,7 @@ class Slideshow:
                     # Nothing to show — splash, wait, re-scan, try again
                     await self.show_default_screen()
                     await asyncio.sleep(self.interval)
-                    await self.load_slides()
+                    await self.scan_slides()
                     continue
 
                 # Clamp in case files were deleted since last scan
@@ -200,7 +200,7 @@ class Slideshow:
                 self.current_image_index += 1
                 if self.current_image_index >= len(self.slides):
                     # Wrapped — re-scan so newly uploaded files appear in the next cycle
-                    await self.load_slides()
+                    await self.scan_slides()
                     self.current_image_index = 0
 
                 for event in pygame.event.get():
