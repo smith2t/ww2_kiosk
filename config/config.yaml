@@ -17,10 +17,8 @@ input:
   # Button pins - ACTIVE wiring (move Button4 from Pin8 to Pin11!)
   button1_pin: 264  # GPIO 264 (Physical Pin 3)  - Button 1
   button2_pin: 263  # GPIO 263 (Physical Pin 5)  - Button 2
-  button3_pin: null  # GPIO 269 (Physical Pin 7) DISABLED — confirmed Pin 7
-  # button3_pin: 269 # has continuous electrical noise (~3 phantom events/sec
-                     # even at idle). Likely long unshielded wire / EMI / faulty
-                     # switch. Re-enable after hardware fix or pin swap.
+  button3_pin: 269  # GPIO 269 (Physical Pin 7) — re-enabled with twisted-pair
+                    # signal+ground wiring to suppress EMI
   button4_pin: 226  # GPIO 226 (Physical Pin 11) - Button 4 *** MOVE WIRE FROM PIN 8 TO PIN 11 ***
   debounce_time: 50  # milliseconds
 

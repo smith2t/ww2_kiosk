@@ -28,6 +28,9 @@ class LEDController:
         self.exported_pins = set()
         self.led_states = {1: False, 2: False, 3: False, 4: False}
         self.animation_running = False
+        # Separate flag for the long-lived slideshow breathing animation so
+        # boot_sequence's finally-block can't kill it via animation_running.
+        self.slideshow_anim_running = False
 
     async def initialize(self) -> bool:
         """Initialize LED controller"""
@@ -229,30 +232,34 @@ class LEDController:
             await self._set_led(button_id, True)
 
     async def slideshow_mode_indicator(self):
-        """Gentle breathing pattern to indicate slideshow mode"""
-        self.animation_running = True
+        """Gentle breathing pattern to indicate slideshow mode.
+
+        Uses a dedicated slideshow_anim_running flag so the shared
+        animation_running flag (toggled by boot_sequence's finally block)
+        can't terminate this long-lived loop.
+        """
+        self.slideshow_anim_running = True
+        logger.info("Slideshow LED breathing started")
 
         try:
-            while self.animation_running:
-                # Gentle breathing pattern
-                for brightness in range(0, 2):  # Simple on/off breathing
-                    if not self.animation_running:
+            while self.slideshow_anim_running:
+                for brightness in range(0, 2):
+                    if not self.slideshow_anim_running:
                         break
-
-                    # Light up all LEDs dimly
                     for led_id in [1, 2, 3, 4]:
                         await self._set_led(led_id, brightness == 1)
-
-                    await asyncio.sleep(2.0)  # Slow breathing
+                    await asyncio.sleep(2.0)
 
         except Exception as e:
             logger.error(f"Error in slideshow indicator: {e}")
 
         await self.all_leds_off()
+        logger.info("Slideshow LED breathing stopped")
 
     async def stop_animations(self):
         """Stop all running LED animations"""
         self.animation_running = False
+        self.slideshow_anim_running = False
         await asyncio.sleep(0.5)  # Wait for animations to stop
         await self.all_leds_off()
 
