@@ -6,7 +6,7 @@ display:
   transition_duration: 1.0  # fade transition time
   shuffle_slideshow: true
   idle_timeout: 30  # seconds before returning to slideshow
-  video_player: vlc  # omxplayer (hardware accel) or vlc
+  video_player: mpv  # mpv (recommended) | vlc | omxplayer
   # LED pins - ACTIVE wiring (move LED1 from Pin10 to Pin18!)
   led1_pin: 228   # GPIO 228 (Physical Pin 18) - LED 1 *** MOVE WIRE FROM PIN 10 TO PIN 18 ***
   led2_pin: 267   # GPIO 267 (Physical Pin 32) - LED 2

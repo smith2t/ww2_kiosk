@@ -43,25 +43,42 @@ class VideoPlayer:
         # Stop any current playback
         await self.stop()
         
-        # Build command based on player (prioritize OMXPlayer for hardware acceleration)
-        if self.player_cmd == "omxplayer":
+        # Build command based on player. mpv is the recommended choice — no
+        # first-run privacy dialog, lighter than VLC, designed for embedded use.
+        if self.player_cmd == "mpv":
+            cmd = [
+                "mpv",
+                "--fullscreen",
+                "--ontop",
+                "--hwdec=auto-copy",              # H618 hardware H.264 decode
+                "--no-osc",
+                "--no-osd-bar",
+                "--no-input-default-bindings",
+                "--no-input-cursor",
+                "--cursor-autohide=always",
+                # Note: --really-quiet removed so we can see decode errors in logs
+                "--msg-level=all=warn",           # quieter than info, louder than really-quiet
+                "--no-terminal",
+                str(video_file),
+            ]
+        elif self.player_cmd == "omxplayer":
             cmd = [
                 "omxplayer",
-                "-b",  # Blank background
-                "-o", "both",  # Audio output to both HDMI and headphone jack
-                "--no-osd",  # No on-screen display
-                "--aspect-mode", "letterbox",  # Maintain aspect ratio
-                str(video_file)
+                "-b",
+                "-o", "both",
+                "--no-osd",
+                "--aspect-mode", "letterbox",
+                str(video_file),
             ]
         elif self.player_cmd == "vlc":
             cmd = [
                 "vlc",
                 "--fullscreen",
+                "--video-on-top",
                 "--play-and-exit",
                 "--no-video-title-show",
-                "--quiet",
                 "--no-osd",
-                str(video_file)
+                str(video_file),
             ]
         else:
             cmd = [self.player_cmd, str(video_file)]
@@ -72,14 +89,28 @@ class VideoPlayer:
             self.current_process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.PIPE,  # capture so we can see why VLC failed
             )
             self.is_playing = True
+            asyncio.create_task(self._log_stderr(self.current_process))
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to start video playback: {e}")
             return False
+
+    async def _log_stderr(self, proc):
+        """Drain the player's stderr to the kiosk log so failures are visible."""
+        if proc.stderr is None:
+            return
+        try:
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                logger.warning(f"[player] {line.decode(errors='replace').rstrip()}")
+        except Exception as e:
+            logger.error(f"Error draining player stderr: {e}")
             
     async def stop(self):
         """Stop current video playback"""

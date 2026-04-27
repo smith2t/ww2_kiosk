@@ -46,7 +46,21 @@ class Slideshow:
         
         pygame.display.set_caption("WW2 Kiosk")
         self.clock = pygame.time.Clock()
-        
+
+        # Mark the pygame window as always-above so xfwm4 keeps it on top of
+        # xfdesktop / xfce4-panel even after mpv (which uses --ontop) exits.
+        # Without this, xfce4-session respawns xfdesktop and it eventually
+        # surfaces on top of the slideshow.
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "wmctrl", "-r", "WW2 Kiosk", "-b", "add,above,fullscreen",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except Exception as e:
+            logger.warning(f"wmctrl always-above failed: {e}")
+
         # Load slides list (images, PDFs, PowerPoint)
         await self.scan_slides()
         

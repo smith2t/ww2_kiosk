@@ -21,11 +21,20 @@ class DisplayController:
         self.settings = settings
         self.current_mode = DisplayMode.IDLE
         self.last_activity = time.time()
-        
+
         self.video_player = VideoPlayer(settings)
         self.slideshow = Slideshow(settings)
-        
+
         self.idle_timeout = settings.display.idle_timeout
+
+        # Strong refs for background tasks. asyncio holds only weak refs and
+        # may garbage-collect orphan tasks at any time — without this, the
+        # _video_end_handler dies before the player exits and the slideshow
+        # never resumes.
+        self._bg_tasks = set()
+        # Cancel any prior end-handler before starting a new video so back-to-
+        # back presses can't leave a stale task firing extra slideshow restarts.
+        self._end_handler_task = None
         
     async def initialize(self):
         """Initialize display subsystems"""
@@ -47,23 +56,42 @@ class DisplayController:
     async def play_video(self, video_path):
         """Play a specific video"""
         logger.info(f"Playing video: {video_path}")
-        
+
         if self.current_mode == DisplayMode.SLIDESHOW:
             await self.slideshow.stop()
-        
+
         self.current_mode = DisplayMode.VIDEO
         self.last_activity = time.time()
-        
+
+        # Cancel any in-flight end-handler from a previous play so we don't
+        # have two handlers racing to restart the slideshow.
+        if self._end_handler_task and not self._end_handler_task.done():
+            self._end_handler_task.cancel()
+
         await self.video_player.play(video_path)
-        
-        # Return to slideshow after video ends
-        asyncio.create_task(self._video_end_handler())
+
+        # Save a strong reference so asyncio doesn't GC the handler.
+        self._end_handler_task = asyncio.create_task(self._video_end_handler())
         
     async def _video_end_handler(self):
         """Handle video playback completion"""
         await self.video_player.wait_for_completion()
         logger.info("Video playback completed, returning to slideshow")
         self.last_activity = time.time()
+
+        # mpv ran with --ontop which pushed pygame's window down the X11 stack;
+        # xfwm4 does NOT auto-restore on mpv exit, so without this the slideshow
+        # renders into a window that's hidden behind xfdesktop. Raise the
+        # pygame window back to the top before resuming.
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "wmctrl", "-a", "WW2 Kiosk",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except Exception as e:
+            logger.warning(f"wmctrl raise failed: {e}")
 
         # Automatically return to slideshow
         await asyncio.sleep(2)  # Brief pause before returning to slideshow
