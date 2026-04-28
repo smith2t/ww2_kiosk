@@ -6,24 +6,32 @@ from pathlib import Path
 
 from .video_player import VideoPlayer
 from .slideshow import Slideshow
+from .menu import Menu
 
 logger = logging.getLogger(__name__)
 
 
 class DisplayMode(Enum):
     SLIDESHOW = "slideshow"
+    MENU = "menu"
     VIDEO = "video"
     IDLE = "idle"
 
 
 class DisplayController:
-    def __init__(self, settings):
+    # Menu auto-returns to slideshow if no video is selected within this window.
+    MENU_TIMEOUT_SEC = 30
+
+    def __init__(self, settings, button_mapper=None):
         self.settings = settings
+        self.button_mapper = button_mapper
         self.current_mode = DisplayMode.IDLE
         self.last_activity = time.time()
+        self.menu_shown_at = 0.0
 
         self.video_player = VideoPlayer(settings)
         self.slideshow = Slideshow(settings)
+        self.menu = Menu(settings, button_mapper) if button_mapper else None
 
         self.idle_timeout = settings.display.idle_timeout
 
@@ -39,19 +47,43 @@ class DisplayController:
     async def initialize(self):
         """Initialize display subsystems"""
         logger.info("Initializing display controller")
-        
+
         await self.video_player.initialize()
         await self.slideshow.initialize()
-        
+        if self.menu:
+            await self.menu.initialize(screen=self.slideshow.screen)
+
     async def start_slideshow(self):
         """Start the picture slideshow"""
         logger.info("Starting slideshow mode")
-        
+
         if self.current_mode == DisplayMode.VIDEO:
             await self.video_player.stop()
-        
+
         self.current_mode = DisplayMode.SLIDESHOW
         await self.slideshow.start()
+
+    async def show_menu(self):
+        """Pause the slideshow and draw the colored menu screen."""
+        if self.menu is None:
+            logger.warning("show_menu called but no menu available (no button_mapper)")
+            return
+
+        # Re-read button_mappings.json so descriptions edited via the /buttons
+        # web UI show up without restarting the kiosk.
+        if self.button_mapper is not None:
+            self.button_mapper.load_mappings()
+
+        logger.info("Showing menu")
+        # Stop the slideshow first so it doesn't keep flipping over the menu.
+        await self.slideshow.stop()
+        self.current_mode = DisplayMode.MENU
+        self.menu_shown_at = time.time()
+        self.menu.draw()
+
+    def menu_expired(self) -> bool:
+        return (self.current_mode == DisplayMode.MENU
+                and time.time() - self.menu_shown_at > self.MENU_TIMEOUT_SEC)
         
     async def play_video(self, video_path):
         """Play a specific video"""

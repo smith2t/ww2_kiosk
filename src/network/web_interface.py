@@ -112,7 +112,9 @@ class WebInterface:
 
         @self.app.route('/buttons', methods=['GET', 'POST'])
         def buttons():
-            mappings = self._load_button_mappings()
+            data = self._load_button_data()
+            mappings = data['mappings']
+            descriptions = data['descriptions']
 
             if request.method == 'POST':
                 button_id = request.form.get('button_id', '').strip()
@@ -120,9 +122,9 @@ class WebInterface:
                     flash(f'Invalid button id: {button_id}')
                     return redirect(url_for('buttons'))
 
-                # Optional uploaded video for this button
                 uploaded = request.files.get('video')
                 selected_existing = request.form.get('existing', '').strip()
+                description = request.form.get('description', '').strip()
                 target_filename = None
 
                 if uploaded and uploaded.filename:
@@ -140,20 +142,26 @@ class WebInterface:
                     return redirect(url_for('buttons'))
 
                 mappings[button_id] = target_filename
-                self._save_button_mappings(mappings)
-                flash(f'Button {button_id} → {target_filename}')
+                descriptions[button_id] = description
+                self._save_button_data(mappings, descriptions)
+                flash(f'Button {button_id} → {target_filename}'
+                      + (f' ({description})' if description else ''))
                 return redirect(url_for('buttons'))
 
             # GET: build the page
             existing_videos = sorted([p.name for ext in ('*.mp4', '*.avi', '*.mkv', '*.mov')
                                       for p in self.video_dir.glob(ext)])
             buttons_data = []
+            # Color order matches the menu screen: 1=Blue 2=Green 3=Yellow 4=Red
+            colors = {'1': 'Blue', '2': 'Green', '3': 'Yellow', '4': 'Red'}
             for bid in ('1', '2', '3', '4'):
                 current = mappings.get(bid)
                 file_exists = bool(current and (self.video_dir / current).exists())
                 buttons_data.append({
                     'id': bid,
+                    'color': colors[bid],
                     'current': current,
+                    'description': descriptions.get(bid, ''),
                     'file_exists': file_exists,
                 })
             return render_template_string(BUTTONS_TEMPLATE,
@@ -191,21 +199,29 @@ class WebInterface:
                 'uptime': '24h'  # TODO: Calculate actual uptime
             })
 
-    def _load_button_mappings(self) -> dict:
+    def _load_button_data(self) -> dict:
+        """Return both mappings and descriptions; gracefully handles old files
+        that lack the descriptions section."""
         if not self.button_mappings_file.exists():
-            return {}
+            return {'mappings': {}, 'descriptions': {}}
         try:
             with open(self.button_mappings_file) as f:
-                return json.load(f).get('mappings', {})
+                data = json.load(f)
+            return {
+                'mappings': data.get('mappings', {}) or {},
+                'descriptions': data.get('descriptions', {}) or {},
+            }
         except Exception as e:
             logger.error(f"Failed to load button mappings: {e}")
-            return {}
+            return {'mappings': {}, 'descriptions': {}}
 
-    def _save_button_mappings(self, mappings: dict) -> None:
+    def _save_button_data(self, mappings: dict, descriptions: dict) -> None:
         try:
             self.button_mappings_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.button_mappings_file, 'w') as f:
-                json.dump({'mappings': mappings}, f, indent=2)
+                json.dump({'mappings': mappings,
+                           'descriptions': descriptions},
+                          f, indent=2)
         except Exception as e:
             logger.error(f"Failed to save button mappings: {e}")
 
@@ -491,7 +507,16 @@ BUTTONS_TEMPLATE = '''
         .nav-menu a:hover { background: #0056b3; }
         .button-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; margin-top: 20px; }
         .button-card { border: 2px solid #ddd; border-radius: 8px; padding: 20px; background: #fafafa; }
-        .button-card h2 { margin-top: 0; color: #007bff; }
+        .button-card h2 { margin-top: 0; }
+        .button-card.btn-Blue   { border-color: #2563eb; }
+        .button-card.btn-Blue   h2 { color: #2563eb; }
+        .button-card.btn-Green  { border-color: #16a34a; }
+        .button-card.btn-Green  h2 { color: #16a34a; }
+        .button-card.btn-Yellow { border-color: #ca8a04; }
+        .button-card.btn-Yellow h2 { color: #ca8a04; }
+        .button-card.btn-Red    { border-color: #dc2626; }
+        .button-card.btn-Red    h2 { color: #dc2626; }
+        textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: inherit; resize: vertical; }
         .current-mapping { padding: 10px; border-radius: 4px; margin-bottom: 15px; font-family: monospace; }
         .ok { background: #d4edda; color: #155724; }
         .missing { background: #fff3cd; color: #856404; }
@@ -533,8 +558,8 @@ BUTTONS_TEMPLATE = '''
 
         <div class="button-grid">
             {% for b in buttons_data %}
-            <div class="button-card">
-                <h2>Button {{ b.id }}</h2>
+            <div class="button-card btn-{{ b.color }}">
+                <h2>Button {{ b.id }} — {{ b.color }}</h2>
 
                 {% if b.current and b.file_exists %}
                 <div class="current-mapping ok">▶ {{ b.current }}</div>
@@ -562,6 +587,12 @@ BUTTONS_TEMPLATE = '''
                     <div class="form-row">
                         <label for="video_{{ b.id }}">Upload a new video:</label>
                         <input type="file" name="video" id="video_{{ b.id }}" accept=".mp4,.avi,.mkv,.mov">
+                    </div>
+
+                    <div class="form-row">
+                        <label for="description_{{ b.id }}">Description (shown on the menu screen):</label>
+                        <textarea name="description" id="description_{{ b.id }}" rows="2"
+                                  placeholder="e.g. Battle of Midway, June 1942">{{ b.description }}</textarea>
                     </div>
 
                     <button type="submit" class="save-btn">💾 Save Button {{ b.id }}</button>

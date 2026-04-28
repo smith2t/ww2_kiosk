@@ -189,7 +189,25 @@ class Slideshow:
         Always launches the loop — it re-scans the media directory each time it
         wraps, so newly uploaded files appear automatically and a fresh Pi with
         no media yet recovers as soon as the user uploads something.
+
+        Also re-asserts the pygame display: when mpv ran with --ontop it
+        disturbed pygame's X drawable, and a stale surface causes flip() to
+        silently render to nowhere (the "kiosk goes blank after a video"
+        symptom). Re-calling set_mode reclaims a fresh surface.
         """
+        try:
+            if self.settings.display.fullscreen:
+                self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            else:
+                self.screen = pygame.display.set_mode(
+                    (self.settings.display.width, self.settings.display.height))
+            # Force an immediate paint so the user sees something even before
+            # the first slide is decoded.
+            self.screen.fill((0, 0, 0))
+            pygame.display.flip()
+        except Exception as e:
+            logger.warning(f"slideshow.start: failed to refresh pygame display: {e}")
+
         self.running = True
         asyncio.create_task(self._slideshow_loop())
 

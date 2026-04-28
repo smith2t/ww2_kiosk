@@ -13,8 +13,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config.settings import Settings
-from display.display_controller import DisplayController
+from display.display_controller import DisplayController, DisplayMode
 from display.led_controller import LEDController
+from input.button_mapper import ButtonMapper
 from input.gpio_controller import GPIOController
 from media.content_loader import ContentLoader
 from network.ap_manager import AccessPointManager
@@ -71,8 +72,11 @@ class WW2Kiosk:
             if self.led_controller:
                 await self.led_controller.progress_indicator("Loading media content", 6, 2)
 
+            # ButtonMapper is shared by display (menu) and gpio_controller.
+            self.button_mapper = ButtonMapper(self.settings)
+
             # Initialize display
-            self.display_controller = DisplayController(self.settings)
+            self.display_controller = DisplayController(self.settings, self.button_mapper)
             await self.display_controller.initialize()
             if self.led_controller:
                 await self.led_controller.progress_indicator("Initializing display", 6, 3)
@@ -116,34 +120,47 @@ class WW2Kiosk:
             raise
     
     async def handle_button_press(self, button_id):
-        """Handle button press events with thread locking to prevent rapid presses"""
+        """Two-stage state machine:
+            slideshow + any-button   -> show MENU
+            menu      + any-button   -> play that button's video
+            video     + any-button   -> ignore (let current video finish)
+        """
         current_time = time.time()
-
-        # Thread locking to prevent issues with rapid button presses
         with self.button_lock:
-            # Debounce check - ignore if too soon after last press
             if current_time - self.last_button_press < self.button_debounce_time:
                 logger.debug(f"Button {button_id} press ignored (debounce)")
                 return
-
             self.last_button_press = current_time
-            logger.info(f"Button {button_id} pressed")
 
-            # Provide LED feedback for button press
-            if self.led_controller:
-                await self.led_controller.button_feedback(button_id)
+        logger.info(f"Button {button_id} pressed (mode={self.display_controller.current_mode.value})")
 
-            video_file = self.content_loader.get_video_for_button(button_id)
-            if video_file:
-                # Show which video is playing via LED
-                if self.led_controller:
-                    await self.led_controller.video_playing_indicator(button_id)
+        if self.led_controller:
+            await self.led_controller.button_feedback(button_id)
 
-                # Add countdown before video starts (like Alex's design)
-                await self._show_countdown(button_id)
-                await self.display_controller.play_video(video_file)
-            else:
-                logger.warning(f"No video mapped to button {button_id}")
+        mode = self.display_controller.current_mode
+        if mode == DisplayMode.VIDEO:
+            # Any button press during a video aborts playback and returns
+            # to the slideshow. Stopping mpv triggers _video_end_handler
+            # which already calls start_slideshow.
+            logger.info("Button press during video — stopping playback")
+            await self.display_controller.video_player.stop()
+            return
+
+        if mode != DisplayMode.MENU:
+            # Currently slideshow (or idle just after boot) — wake into menu.
+            await self.display_controller.show_menu()
+            return
+
+        # We're in menu mode and the user picked a button. Play its video.
+        video_file = self.content_loader.get_video_for_button(button_id)
+        if not video_file:
+            logger.warning(f"No video mapped to button {button_id}")
+            return
+
+        if self.led_controller:
+            await self.led_controller.video_playing_indicator(button_id)
+        await self._show_countdown(button_id)
+        await self.display_controller.play_video(video_file)
 
     async def _show_countdown(self, button_id):
         """Show countdown before video starts"""
@@ -180,6 +197,11 @@ class WW2Kiosk:
             # Main event loop
             while self.running:
                 await asyncio.sleep(0.1)
+
+                # Auto-return to slideshow if menu has been idle too long.
+                if self.display_controller.menu_expired():
+                    logger.info("Menu timed out — returning to slideshow")
+                    await self.display_controller.start_slideshow()
 
                 # Check for idle timeout
                 if self.display_controller.should_return_to_slideshow():
