@@ -34,14 +34,16 @@ class WebInterface:
                   'files or use a wired connection.')
             return redirect(url_for('upload'))
 
-        self.setup_routes()
         self.media_dir = Path(settings.media.pictures_dir)
         self.video_dir = Path(settings.media.videos_dir)
         self.button_mappings_file = Path(settings.config.button_mappings_file)
+        self.categories_file = self.button_mappings_file.parent / "categories.json"
 
         # Ensure directories exist
         self.media_dir.mkdir(parents=True, exist_ok=True)
         self.video_dir.mkdir(parents=True, exist_ok=True)
+
+        self.setup_routes()
 
     def setup_routes(self):
         """Setup Flask routes"""
@@ -110,62 +112,57 @@ class WebInterface:
 
             return render_template_string(UPLOAD_TEMPLATE)
 
-        @self.app.route('/buttons', methods=['GET', 'POST'])
-        def buttons():
-            data = self._load_button_data()
-            mappings = data['mappings']
-            descriptions = data['descriptions']
+        @self.app.route('/buttons')
+        def buttons_legacy():
+            return redirect(url_for('categories'))
+
+        @self.app.route('/categories', methods=['GET', 'POST'])
+        def categories():
+            cats = self._load_categories()
+            colors = {'1': 'Blue', '2': 'Green', '3': 'Yellow', '4': 'Red'}
 
             if request.method == 'POST':
-                button_id = request.form.get('button_id', '').strip()
-                if button_id not in {'1', '2', '3', '4'}:
-                    flash(f'Invalid button id: {button_id}')
-                    return redirect(url_for('buttons'))
+                cat_id = request.form.get('category_id', '').strip()
+                if cat_id not in {'1', '2', '3', '4'}:
+                    flash(f'Invalid category id: {cat_id}')
+                    return redirect(url_for('categories'))
 
-                uploaded = request.files.get('video')
-                selected_existing = request.form.get('existing', '').strip()
-                description = request.form.get('description', '').strip()
-                target_filename = None
+                title = request.form.get('title', '').strip() or f"Category {cat_id}"
 
-                if uploaded and uploaded.filename:
-                    base = uploaded.filename.rsplit('/', 1)[-1].rsplit('\\', 1)[-1]
-                    if not self._allowed_file(base, 'video'):
-                        flash(f'Button {button_id}: invalid video type ({base})')
-                        return redirect(url_for('buttons'))
-                    target_filename = secure_filename(base)
-                    uploaded.save(str(self.video_dir / target_filename))
-                    flash(f'Button {button_id}: uploaded {target_filename}')
-                elif selected_existing:
-                    target_filename = selected_existing
-                else:
-                    flash(f'Button {button_id}: no video provided')
-                    return redirect(url_for('buttons'))
+                # Items arrive as parallel lists from the dynamic form.
+                files = request.form.getlist('item_file')
+                titles = request.form.getlist('item_title')
+                items = []
+                for fname, ititle in zip(files, titles):
+                    fname = (fname or '').strip()
+                    ititle = (ititle or '').strip()
+                    if not fname:
+                        continue   # skip empty rows
+                    items.append({'file': fname, 'title': ititle})
 
-                mappings[button_id] = target_filename
-                descriptions[button_id] = description
-                self._save_button_data(mappings, descriptions)
-                flash(f'Button {button_id} → {target_filename}'
-                      + (f' ({description})' if description else ''))
-                return redirect(url_for('buttons'))
+                cats[cat_id] = {'title': title, 'items': items}
+                self._save_categories(cats)
+                flash(f'Saved {colors[cat_id]} category — {len(items)} item(s)')
+                return redirect(url_for('categories'))
 
-            # GET: build the page
-            existing_videos = sorted([p.name for ext in ('*.mp4', '*.avi', '*.mkv', '*.mov')
-                                      for p in self.video_dir.glob(ext)])
-            buttons_data = []
-            # Color order matches the menu screen: 1=Blue 2=Green 3=Yellow 4=Red
-            colors = {'1': 'Blue', '2': 'Green', '3': 'Yellow', '4': 'Red'}
-            for bid in ('1', '2', '3', '4'):
-                current = mappings.get(bid)
-                file_exists = bool(current and (self.video_dir / current).exists())
-                buttons_data.append({
-                    'id': bid,
-                    'color': colors[bid],
-                    'current': current,
-                    'description': descriptions.get(bid, ''),
-                    'file_exists': file_exists,
+            # GET: build the view model
+            existing_videos = sorted([p.name for ext in ('*.mp4', '*.avi', '*.mkv', '*.mov', '*.pdf')
+                                      for p in (list(self.video_dir.glob(ext))
+                                                + list(self.media_dir.glob(ext)))])
+            view = []
+            for cid in ('1', '2', '3', '4'):
+                raw = cats.get(cid, {}) or {}
+                items = list(raw.get('items') or [])
+                view.append({
+                    'id': cid,
+                    'color': colors[cid],
+                    'title': raw.get('title', f"Category {cid}"),
+                    # Renamed from 'items' so Jinja2's dotted access doesn't
+                    # resolve c.items to the dict.items() method.
+                    'entries': items,
                 })
-            return render_template_string(BUTTONS_TEMPLATE,
-                                          buttons_data=buttons_data,
+            return render_template_string(CATEGORIES_TEMPLATE,
+                                          categories=view,
                                           existing_videos=existing_videos)
 
         @self.app.route('/delete/<file_type>/<filename>')
@@ -198,6 +195,45 @@ class WebInterface:
                 'video_count': len(list(self.video_dir.glob('*'))),
                 'uptime': '24h'  # TODO: Calculate actual uptime
             })
+
+    def _load_categories(self) -> dict:
+        """Read categories.json — keyed by '1'..'4', each {title, items[]}.
+        Returns empty dict structure if the file is missing or malformed."""
+        if not self.categories_file.exists():
+            # First run on this Pi — try migrating from the old button_mappings.json.
+            if self.button_mappings_file.exists():
+                try:
+                    with open(self.button_mappings_file) as f:
+                        legacy = json.load(f)
+                    mappings = legacy.get('mappings', {}) or {}
+                    descriptions = legacy.get('descriptions', {}) or {}
+                    cats = {}
+                    for cid in ('1', '2', '3', '4'):
+                        f_ = (mappings.get(cid) or '').strip()
+                        d_ = (descriptions.get(cid) or '').strip()
+                        items = []
+                        if f_:
+                            items.append({'file': f_, 'title': d_})
+                        cats[cid] = {'title': d_ or f"Category {cid}", 'items': items}
+                    return cats
+                except Exception as e:
+                    logger.warning(f"Legacy migration in web read failed: {e}")
+            return {}
+        try:
+            with open(self.categories_file) as f:
+                data = json.load(f)
+            return data.get('categories', {}) or {}
+        except Exception as e:
+            logger.error(f"Failed to load categories.json: {e}")
+            return {}
+
+    def _save_categories(self, cats: dict) -> None:
+        try:
+            self.categories_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.categories_file, 'w') as f:
+                json.dump({'categories': cats}, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save categories.json: {e}")
 
     def _load_button_data(self) -> dict:
         """Return both mappings and descriptions; gracefully handles old files
@@ -291,7 +327,7 @@ INDEX_TEMPLATE = '''
         <div class="nav-menu">
             <a href="{{ url_for('media') }}">📁 Manage Media</a>
             <a href="{{ url_for('upload') }}">⬆️ Upload Files</a>
-            <a href="{{ url_for('buttons') }}">🎛️ Configure Buttons</a>
+            <a href="{{ url_for('categories') }}">🎛️ Configure Categories</a>
         </div>
 
         <div style="text-align: center; margin-top: 30px; color: #666;">
@@ -601,6 +637,163 @@ BUTTONS_TEMPLATE = '''
             {% endfor %}
         </div>
     </div>
+</body>
+</html>
+'''
+
+
+CATEGORIES_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Configure Categories - WW2 Kiosk</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1100px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; text-align: center; }
+        .nav-menu { text-align: center; margin: 20px 0; }
+        .nav-menu a { display: inline-block; margin: 0 10px; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+        .nav-menu a:hover { background: #0056b3; }
+        .cat-grid { display: grid; grid-template-columns: 1fr; gap: 24px; margin-top: 20px; }
+        .cat-card { border: 3px solid #ddd; border-radius: 10px; padding: 20px; background: #fafafa; }
+        .cat-card h2 { margin: 0 0 12px 0; }
+        .cat-Blue   { border-color: #2563eb; } .cat-Blue   h2 { color: #2563eb; }
+        .cat-Green  { border-color: #16a34a; } .cat-Green  h2 { color: #16a34a; }
+        .cat-Yellow { border-color: #ca8a04; } .cat-Yellow h2 { color: #ca8a04; }
+        .cat-Red    { border-color: #dc2626; } .cat-Red    h2 { color: #dc2626; }
+        label { font-weight: bold; display: block; margin-bottom: 4px; }
+        input[type="text"], select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font: inherit; }
+        .title-row { margin-bottom: 16px; }
+        .item-row { display: grid; grid-template-columns: 1fr 1fr 90px; gap: 8px; align-items: center; margin: 6px 0; }
+        .item-row select, .item-row input[type="text"] { margin: 0; }
+        .row-actions button { width: 100%; padding: 8px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        .btn-remove { background: #ef4444; color: white; }
+        .btn-remove:hover { background: #b91c1c; }
+        .btn-add { background: #6366f1; color: white; padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; margin-top: 8px; }
+        .btn-add:hover { background: #4338ca; }
+        .save-btn { background: #16a34a; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 15px; width: 100%; margin-top: 14px; font-weight: bold; }
+        .save-btn:hover { background: #166534; }
+        .empty-hint { color: #888; font-style: italic; margin: 8px 0; }
+        .flash-messages { margin: 20px 0; }
+        .flash-message { padding: 10px; border-radius: 4px; margin: 5px 0; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .help { color: #555; font-size: 14px; text-align: center; margin: 8px 0 18px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎛️ Configure Categories</h1>
+        <div class="nav-menu">
+            <a href="{{ url_for('index') }}">🏠 Home</a>
+            <a href="{{ url_for('media') }}">📁 Manage Media</a>
+            <a href="{{ url_for('upload') }}">⬆️ Upload Files</a>
+        </div>
+
+        <p class="help">
+            Each colored button selects a category. Within a category, the
+            visitor sees a 2×2 menu of items; if a category has more than 4
+            items, the 4th tile becomes "Next →" so they can page through.
+        </p>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="flash-messages">
+            {% for m in messages %}<div class="flash-message">{{ m }}</div>{% endfor %}
+        </div>
+        {% endif %}{% endwith %}
+
+        <div class="cat-grid">
+        {% for c in categories %}
+            <form class="cat-card cat-{{ c.color }}" method="post" id="form-{{ c.id }}">
+                <h2>Button {{ c.id }} — {{ c.color }}</h2>
+                <input type="hidden" name="category_id" value="{{ c.id }}">
+
+                <div class="title-row">
+                    <label for="title-{{ c.id }}">Category title (shown on the top-level menu)</label>
+                    <input type="text" id="title-{{ c.id }}" name="title"
+                           value="{{ c.title }}" placeholder="e.g. European Theater">
+                </div>
+
+                <label>Items</label>
+                <div id="items-{{ c.id }}">
+                    {% for it in c.entries %}
+                    <div class="item-row">
+                        <select name="item_file">
+                            <option value="">— pick a file —</option>
+                            {% for v in existing_videos %}
+                            <option value="{{ v }}" {% if v == it.file %}selected{% endif %}>{{ v }}</option>
+                            {% endfor %}
+                        </select>
+                        <input type="text" name="item_title" value="{{ it.title }}"
+                               placeholder="Title shown on menu (e.g. D-Day Normandy)">
+                        <div class="row-actions">
+                            <button type="button" class="btn-remove" onclick="removeRow(this)">Remove</button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    {% if not c.entries %}
+                    <p class="empty-hint">No items yet — click "Add item" to add one.</p>
+                    {% endif %}
+                </div>
+
+                <button type="button" class="btn-add"
+                        onclick="addRow('items-{{ c.id }}')">
+                    + Add item
+                </button>
+
+                <button type="submit" class="save-btn">💾 Save {{ c.color }} category</button>
+            </form>
+        {% endfor %}
+        </div>
+    </div>
+
+<script id="kiosk-files" type="application/json">{{ existing_videos | tojson }}</script>
+<script>
+const KIOSK_FILES = JSON.parse(document.getElementById('kiosk-files').textContent);
+
+function removeRow(btn) {
+    btn.closest('.item-row').remove();
+}
+
+function addRow(containerId) {
+    const container = document.getElementById(containerId);
+
+    // Drop the empty-state hint if present
+    const hint = container.querySelector('.empty-hint');
+    if (hint) hint.remove();
+
+    const row = document.createElement('div');
+    row.className = 'item-row';
+
+    const select = document.createElement('select');
+    select.name = 'item_file';
+    let html = '<option value="">— pick a file —</option>';
+    for (const v of KIOSK_FILES) {
+        const safe = v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        html += `<option value="${safe}">${safe}</option>`;
+    }
+    select.innerHTML = html;
+
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.name = 'item_title';
+    titleInput.placeholder = 'Title shown on menu';
+
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn-remove';
+    removeBtn.textContent = 'Remove';
+    removeBtn.onclick = () => removeRow(removeBtn);
+    actions.appendChild(removeBtn);
+
+    row.appendChild(select);
+    row.appendChild(titleInput);
+    row.appendChild(actions);
+    container.appendChild(row);
+}
+</script>
 </body>
 </html>
 '''

@@ -5,33 +5,37 @@ from enum import Enum
 from pathlib import Path
 
 from .video_player import VideoPlayer
+from .pdf_player import PdfPlayer
 from .slideshow import Slideshow
-from .menu import Menu
+from .menu import CategoryMenu, ItemMenu
 
 logger = logging.getLogger(__name__)
 
 
 class DisplayMode(Enum):
     SLIDESHOW = "slideshow"
-    MENU = "menu"
+    CATEGORY_MENU = "category_menu"
+    ITEM_MENU = "item_menu"
     VIDEO = "video"
     IDLE = "idle"
 
 
 class DisplayController:
-    # Menu auto-returns to slideshow if no video is selected within this window.
+    # Either menu auto-returns to slideshow if untouched for this long.
     MENU_TIMEOUT_SEC = 30
 
-    def __init__(self, settings, button_mapper=None):
+    def __init__(self, settings, store=None):
         self.settings = settings
-        self.button_mapper = button_mapper
+        self.store = store      # CategoryStore — None disables menus
         self.current_mode = DisplayMode.IDLE
         self.last_activity = time.time()
         self.menu_shown_at = 0.0
 
         self.video_player = VideoPlayer(settings)
+        self.pdf_player = PdfPlayer(settings)
         self.slideshow = Slideshow(settings)
-        self.menu = Menu(settings, button_mapper) if button_mapper else None
+        self.category_menu = CategoryMenu(settings, store) if store else None
+        self.item_menu = ItemMenu(settings, store) if store else None
 
         self.idle_timeout = settings.display.idle_timeout
 
@@ -49,9 +53,12 @@ class DisplayController:
         logger.info("Initializing display controller")
 
         await self.video_player.initialize()
+        await self.pdf_player.initialize()
         await self.slideshow.initialize()
-        if self.menu:
-            await self.menu.initialize(screen=self.slideshow.screen)
+        if self.category_menu:
+            await self.category_menu.initialize(screen=self.slideshow.screen)
+        if self.item_menu:
+            await self.item_menu.initialize(screen=self.slideshow.screen)
 
     async def start_slideshow(self):
         """Start the picture slideshow"""
@@ -63,26 +70,43 @@ class DisplayController:
         self.current_mode = DisplayMode.SLIDESHOW
         await self.slideshow.start()
 
-    async def show_menu(self):
-        """Pause the slideshow and draw the colored menu screen."""
-        if self.menu is None:
-            logger.warning("show_menu called but no menu available (no button_mapper)")
+    async def show_category_menu(self):
+        """Pause the slideshow and draw the top-level category menu."""
+        if self.category_menu is None:
+            logger.warning("show_category_menu called but no store available")
             return
-
-        # Re-read button_mappings.json so descriptions edited via the /buttons
-        # web UI show up without restarting the kiosk.
-        if self.button_mapper is not None:
-            self.button_mapper.load_mappings()
-
-        logger.info("Showing menu")
-        # Stop the slideshow first so it doesn't keep flipping over the menu.
+        # Re-read categories.json so /categories edits apply without restart.
+        if self.store is not None:
+            self.store.load()
+        logger.info("Showing category menu")
         await self.slideshow.stop()
-        self.current_mode = DisplayMode.MENU
+        self.current_mode = DisplayMode.CATEGORY_MENU
         self.menu_shown_at = time.time()
-        self.menu.draw()
+        self.category_menu.draw()
+
+    async def show_item_menu(self, cat_id):
+        """Switch to the per-category item menu."""
+        if self.item_menu is None:
+            logger.warning("show_item_menu called but no store available")
+            return
+        if self.store is not None:
+            self.store.load()
+        logger.info(f"Showing item menu for category {cat_id}")
+        # Slideshow already stopped if we came from the category menu, but
+        # cover the slideshow->item-menu jump-in case too.
+        if self.current_mode == DisplayMode.SLIDESHOW:
+            await self.slideshow.stop()
+        self.item_menu.open(cat_id)
+        self.current_mode = DisplayMode.ITEM_MENU
+        self.menu_shown_at = time.time()
+        self.item_menu.draw()
+
+    def reset_menu_timeout(self):
+        """Called when a menu redraws after a 'Next' press, to keep it open."""
+        self.menu_shown_at = time.time()
 
     def menu_expired(self) -> bool:
-        return (self.current_mode == DisplayMode.MENU
+        return (self.current_mode in (DisplayMode.CATEGORY_MENU, DisplayMode.ITEM_MENU)
                 and time.time() - self.menu_shown_at > self.MENU_TIMEOUT_SEC)
         
     async def play_video(self, video_path):
@@ -104,17 +128,55 @@ class DisplayController:
 
         # Save a strong reference so asyncio doesn't GC the handler.
         self._end_handler_task = asyncio.create_task(self._video_end_handler())
-        
-    async def _video_end_handler(self):
-        """Handle video playback completion"""
-        await self.video_player.wait_for_completion()
-        logger.info("Video playback completed, returning to slideshow")
+
+    async def play_pdf(self, pdf_path):
+        """Play a PDF page-by-page in pygame. Same state semantics as
+        play_video — visitor can press any button mid-show to abort, and
+        when the PDF finishes (or is aborted) we return to the item menu.
+        """
+        logger.info(f"Playing PDF: {pdf_path}")
+
+        if self.current_mode == DisplayMode.SLIDESHOW:
+            await self.slideshow.stop()
+
+        self.current_mode = DisplayMode.VIDEO   # reuse VIDEO mode — same UX
         self.last_activity = time.time()
 
-        # mpv ran with --ontop which pushed pygame's window down the X11 stack;
-        # xfwm4 does NOT auto-restore on mpv exit, so without this the slideshow
-        # renders into a window that's hidden behind xfdesktop. Raise the
-        # pygame window back to the top before resuming.
+        if self._end_handler_task and not self._end_handler_task.done():
+            self._end_handler_task.cancel()
+
+        # PdfPlayer.play awaits internally page-by-page; wrap it so the
+        # post-play return-to-menu logic runs after it finishes.
+        self._end_handler_task = asyncio.create_task(self._pdf_play_handler(pdf_path))
+
+    async def _pdf_play_handler(self, pdf_path):
+        await self.pdf_player.play(pdf_path)
+        logger.info("PDF playback completed")
+        self.last_activity = time.time()
+        # No wmctrl raise needed — we never left the pygame window.
+        await asyncio.sleep(0.5)
+        if self.item_menu is not None and self.item_menu.cat_id is not None:
+            await self.show_item_menu(self.item_menu.cat_id)
+        else:
+            await self.start_slideshow()
+
+    async def stop_active_media(self):
+        """Stop whichever player (video or PDF) is currently active."""
+        if self.video_player.is_playing:
+            await self.video_player.stop()
+        if self.pdf_player.is_playing:
+            await self.pdf_player.stop()
+        
+    async def _video_end_handler(self):
+        """Handle video playback completion. Returns to the item menu of the
+        category we were playing from so the visitor can pick another item;
+        the menu's idle timeout will eventually return to slideshow.
+        """
+        await self.video_player.wait_for_completion()
+        logger.info("Video playback completed")
+        self.last_activity = time.time()
+
+        # Raise the kiosk pygame window back to the top of the X stack.
         try:
             proc = await asyncio.create_subprocess_exec(
                 "wmctrl", "-a", "WW2 Kiosk",
@@ -125,9 +187,14 @@ class DisplayController:
         except Exception as e:
             logger.warning(f"wmctrl raise failed: {e}")
 
-        # Automatically return to slideshow
-        await asyncio.sleep(2)  # Brief pause before returning to slideshow
-        await self.start_slideshow()
+        await asyncio.sleep(1)
+        # If we know which category the video came from, surface that menu
+        # again so the visitor can pick another item without going all the
+        # way back to slideshow.
+        if self.item_menu is not None and self.item_menu.cat_id is not None:
+            await self.show_item_menu(self.item_menu.cat_id)
+        else:
+            await self.start_slideshow()
         
     def should_return_to_slideshow(self):
         """Idle-timeout return is no longer the right mechanism — _video_end_handler

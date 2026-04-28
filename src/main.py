@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config.settings import Settings
 from display.display_controller import DisplayController, DisplayMode
 from display.led_controller import LEDController
-from input.button_mapper import ButtonMapper
+from input.category_store import CategoryStore
 from input.gpio_controller import GPIOController
 from media.content_loader import ContentLoader
 from network.ap_manager import AccessPointManager
@@ -72,11 +72,12 @@ class WW2Kiosk:
             if self.led_controller:
                 await self.led_controller.progress_indicator("Loading media content", 6, 2)
 
-            # ButtonMapper is shared by display (menu) and gpio_controller.
-            self.button_mapper = ButtonMapper(self.settings)
+            # CategoryStore replaces the old ButtonMapper — same JSON dir,
+            # but a richer schema with N items per category.
+            self.store = CategoryStore(self.settings)
 
             # Initialize display
-            self.display_controller = DisplayController(self.settings, self.button_mapper)
+            self.display_controller = DisplayController(self.settings, self.store)
             await self.display_controller.initialize()
             if self.led_controller:
                 await self.led_controller.progress_indicator("Initializing display", 6, 3)
@@ -120,10 +121,12 @@ class WW2Kiosk:
             raise
     
     async def handle_button_press(self, button_id):
-        """Two-stage state machine:
-            slideshow + any-button   -> show MENU
-            menu      + any-button   -> play that button's video
-            video     + any-button   -> ignore (let current video finish)
+        """Three-state machine:
+            slideshow      + any-button -> show CATEGORY_MENU
+            CATEGORY_MENU  + button N   -> show ITEM_MENU for category N
+            ITEM_MENU      + slot 1..3  -> play that item
+            ITEM_MENU      + button 4 (paginated) -> next page
+            VIDEO          + any-button -> stop playback
         """
         current_time = time.time()
         with self.button_lock:
@@ -132,35 +135,54 @@ class WW2Kiosk:
                 return
             self.last_button_press = current_time
 
-        logger.info(f"Button {button_id} pressed (mode={self.display_controller.current_mode.value})")
+        dc = self.display_controller
+        mode = dc.current_mode
+        logger.info(f"Button {button_id} pressed (mode={mode.value})")
 
         if self.led_controller:
             await self.led_controller.button_feedback(button_id)
 
-        mode = self.display_controller.current_mode
         if mode == DisplayMode.VIDEO:
-            # Any button press during a video aborts playback and returns
-            # to the slideshow. Stopping mpv triggers _video_end_handler
-            # which already calls start_slideshow.
-            logger.info("Button press during video — stopping playback")
-            await self.display_controller.video_player.stop()
+            logger.info("Button press during playback — stopping")
+            await dc.stop_active_media()
             return
 
-        if mode != DisplayMode.MENU:
-            # Currently slideshow (or idle just after boot) — wake into menu.
-            await self.display_controller.show_menu()
+        if mode == DisplayMode.SLIDESHOW or mode == DisplayMode.IDLE:
+            await dc.show_category_menu()
             return
 
-        # We're in menu mode and the user picked a button. Play its video.
-        video_file = self.content_loader.get_video_for_button(button_id)
-        if not video_file:
-            logger.warning(f"No video mapped to button {button_id}")
+        if mode == DisplayMode.CATEGORY_MENU:
+            await dc.show_item_menu(button_id)
             return
 
-        if self.led_controller:
-            await self.led_controller.video_playing_indicator(button_id)
-        await self._show_countdown(button_id)
-        await self.display_controller.play_video(video_file)
+        if mode == DisplayMode.ITEM_MENU:
+            choice = dc.item_menu.selection_for_button(button_id)
+            if choice[0] == 'next':
+                dc.item_menu.next_page()
+                dc.reset_menu_timeout()
+                dc.item_menu.draw()
+                return
+            if choice[0] == 'back_to_topics':
+                await dc.show_category_menu()
+                return
+            if choice[0] == 'play':
+                _, item, idx = choice
+                resolved = self.store.resolve_item_path(dc.item_menu.cat_id, idx)
+                if not resolved:
+                    logger.warning(f"Item file missing on disk: {item.file}")
+                    return
+                if self.led_controller:
+                    await self.led_controller.video_playing_indicator(button_id)
+                await self._show_countdown(button_id)
+                # Route by file extension: PDFs play page-by-page in pygame,
+                # videos hand off to mpv.
+                if resolved.lower().endswith('.pdf'):
+                    await dc.play_pdf(resolved)
+                else:
+                    await dc.play_video(resolved)
+                return
+            # 'noop' — empty slot or no items
+            return
 
     async def _show_countdown(self, button_id):
         """Show countdown before video starts"""
