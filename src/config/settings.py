@@ -10,10 +10,13 @@ class DisplaySettings:
     fullscreen: bool = True
     width: int = 1920
     height: int = 1080
-    slideshow_interval: int = 10  # seconds
+    slideshow_interval: int = 10  # seconds per picture in the attract loop
     transition_duration: float = 1.0  # seconds
     shuffle_slideshow: bool = True
-    idle_timeout: int = 30  # seconds to return to slideshow after video
+    idle_timeout: int = 30  # legacy; not used since menu_timeout_sec replaced it
+    menu_timeout_sec: int = 30  # menu auto-returns to slideshow after this idle
+    countdown_sec: int = 3       # 3-2-1 before a video/PDF starts
+    pdf_page_duration: int = 8   # seconds per PDF page during playback
     video_player: str = "vlc"  # vlc or omxplayer
     # LED pins for button feedback (using tested available GPIOs)
     led1_pin: int = 72   # GPIO 72 (Physical Pin 10) - Button 1 LED
@@ -78,8 +81,14 @@ class Settings:
     def __post_init__(self):
         # Override with environment variables if set
         self._load_from_env()
-        
+
         # Load from config file if it exists
+        self._load_from_file()
+
+    def reload(self):
+        """Re-read environment + YAML so live changes via the /settings web
+        page take effect on the running kiosk without a restart."""
+        self._load_from_env()
         self._load_from_file()
         
     def _load_from_env(self):

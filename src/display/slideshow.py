@@ -21,9 +21,9 @@ class Slideshow:
         self.current_image_index = 0
         self.slides = []  # Changed from images to slides to include all media types
 
-        self.interval = settings.display.slideshow_interval
-        self.transition_duration = settings.display.transition_duration
-        self.shuffle = settings.display.shuffle_slideshow
+        # NOTE: don't cache slideshow_interval / shuffle / transition_duration
+        # here — they're read from self.settings at use-time so the /settings
+        # web page can change them on a running kiosk without a restart.
 
         self.screen = None
         self.clock = None
@@ -95,7 +95,7 @@ class Slideshow:
 
         logger.info(f"Found {len(self.slides)} slides total")
 
-        if self.shuffle:
+        if self.settings.display.shuffle_slideshow:
             random.shuffle(self.slides)
 
     async def _convert_pdf_to_images(self, pdf_path):
@@ -218,7 +218,7 @@ class Slideshow:
                 if not self.slides:
                     # Nothing to show — splash, wait, re-scan, try again
                     await self.show_default_screen()
-                    await asyncio.sleep(self.interval)
+                    await asyncio.sleep(self.settings.display.slideshow_interval)
                     await self.scan_slides()
                     continue
 
@@ -227,7 +227,7 @@ class Slideshow:
                     self.current_image_index = 0
 
                 await self.display_slide(self.slides[self.current_image_index])
-                await asyncio.sleep(self.interval)
+                await asyncio.sleep(self.settings.display.slideshow_interval)
 
                 self.current_image_index += 1
                 if self.current_image_index >= len(self.slides):

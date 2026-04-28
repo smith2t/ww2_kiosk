@@ -112,6 +112,68 @@ class WebInterface:
 
             return render_template_string(UPLOAD_TEMPLATE)
 
+        @self.app.route('/settings', methods=['GET', 'POST'])
+        def settings_page():
+            from config.settings import Settings as _S
+            try:
+                import yaml as _yaml
+            except ImportError:
+                flash('PyYAML not installed — cannot edit settings.')
+                return redirect(url_for('index'))
+
+            cfg_path = Path(self.settings.config.config_file)
+
+            if request.method == 'POST':
+                try:
+                    new_values = {
+                        'slideshow_interval': int(request.form.get('slideshow_interval', 10)),
+                        'menu_timeout_sec':   int(request.form.get('menu_timeout_sec', 30)),
+                        'countdown_sec':      int(request.form.get('countdown_sec', 3)),
+                        'pdf_page_duration':  int(request.form.get('pdf_page_duration', 8)),
+                        'shuffle_slideshow':  request.form.get('shuffle_slideshow') == 'on',
+                    }
+                except ValueError:
+                    flash('Settings must be whole numbers.')
+                    return redirect(url_for('settings_page'))
+
+                # Merge into existing config.yaml, leaving everything else untouched.
+                cfg = {}
+                if cfg_path.exists():
+                    try:
+                        with open(cfg_path) as f:
+                            cfg = _yaml.safe_load(f) or {}
+                    except Exception as e:
+                        logger.error(f"Reading {cfg_path} failed: {e}")
+                cfg.setdefault('display', {})
+                for k, v in new_values.items():
+                    cfg['display'][k] = v
+                try:
+                    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(cfg_path, 'w') as f:
+                        _yaml.safe_dump(cfg, f, sort_keys=False)
+                    # Apply live to the running kiosk: same Settings object is
+                    # used by display_controller / main, so reload picks them up.
+                    self.settings.reload()
+                    flash('Settings saved (applied live, no restart needed).')
+                except Exception as e:
+                    logger.error(f"Saving {cfg_path} failed: {e}")
+                    flash(f'Save failed: {e}')
+
+                return redirect(url_for('settings_page'))
+
+            # GET: render the form pre-populated with current values.
+            d = self.settings.display
+            return render_template_string(
+                SETTINGS_TEMPLATE,
+                values={
+                    'slideshow_interval': getattr(d, 'slideshow_interval', 10),
+                    'menu_timeout_sec':   getattr(d, 'menu_timeout_sec', 30),
+                    'countdown_sec':      getattr(d, 'countdown_sec', 3),
+                    'pdf_page_duration':  getattr(d, 'pdf_page_duration', 8),
+                    'shuffle_slideshow':  getattr(d, 'shuffle_slideshow', True),
+                },
+            )
+
         @self.app.route('/buttons')
         def buttons_legacy():
             return redirect(url_for('categories'))
@@ -328,6 +390,7 @@ INDEX_TEMPLATE = '''
             <a href="{{ url_for('media') }}">📁 Manage Media</a>
             <a href="{{ url_for('upload') }}">⬆️ Upload Files</a>
             <a href="{{ url_for('categories') }}">🎛️ Configure Categories</a>
+            <a href="{{ url_for('settings_page') }}">⚙️ Settings</a>
         </div>
 
         <div style="text-align: center; margin-top: 30px; color: #666;">
@@ -794,6 +857,108 @@ function addRow(containerId) {
     container.appendChild(row);
 }
 </script>
+</body>
+</html>
+'''
+
+
+SETTINGS_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Settings - WW2 Kiosk</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 760px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; text-align: center; }
+        .nav-menu { text-align: center; margin: 20px 0; }
+        .nav-menu a { display: inline-block; margin: 0 10px; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+        .nav-menu a:hover { background: #0056b3; }
+        .help { color: #555; font-size: 14px; text-align: center; margin: 8px 0 18px; }
+        form { display: grid; gap: 14px; margin-top: 12px; }
+        .row { display: grid; grid-template-columns: 1fr 120px; gap: 14px; align-items: center; padding: 10px 14px; background: #fafafa; border: 1px solid #eee; border-radius: 6px; }
+        .row .label { font-weight: bold; }
+        .row .desc { color: #555; font-size: 13px; margin-top: 2px; }
+        input[type="number"] { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font: inherit; text-align: right; }
+        input[type="checkbox"] { transform: scale(1.4); margin-right: 8px; }
+        .save-btn { background: #16a34a; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 15px; font-weight: bold; }
+        .save-btn:hover { background: #166534; }
+        .flash-messages { margin: 20px 0; }
+        .flash-message { padding: 10px; border-radius: 4px; margin: 5px 0; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚙️ Settings</h1>
+        <div class="nav-menu">
+            <a href="{{ url_for('index') }}">🏠 Home</a>
+            <a href="{{ url_for('media') }}">📁 Manage Media</a>
+            <a href="{{ url_for('upload') }}">⬆️ Upload Files</a>
+            <a href="{{ url_for('categories') }}">🎛️ Configure Categories</a>
+        </div>
+
+        <p class="help">Changes are applied to the running kiosk immediately —
+            no restart needed.</p>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="flash-messages">
+            {% for m in messages %}<div class="flash-message">{{ m }}</div>{% endfor %}
+        </div>
+        {% endif %}{% endwith %}
+
+        <form method="post">
+            <div class="row">
+                <div>
+                    <div class="label">Slideshow interval</div>
+                    <div class="desc">Seconds each picture is shown in the attract loop.</div>
+                </div>
+                <input type="number" name="slideshow_interval" min="1" max="600"
+                       value="{{ values.slideshow_interval }}">
+            </div>
+
+            <div class="row">
+                <div>
+                    <div class="label">Menu inactivity timeout</div>
+                    <div class="desc">Seconds before the menu returns to the slideshow with no input.</div>
+                </div>
+                <input type="number" name="menu_timeout_sec" min="5" max="600"
+                       value="{{ values.menu_timeout_sec }}">
+            </div>
+
+            <div class="row">
+                <div>
+                    <div class="label">Countdown before playback</div>
+                    <div class="desc">Seconds the LED counts down (3, 2, 1) before a video or PDF starts. Set to 0 to skip.</div>
+                </div>
+                <input type="number" name="countdown_sec" min="0" max="10"
+                       value="{{ values.countdown_sec }}">
+            </div>
+
+            <div class="row">
+                <div>
+                    <div class="label">PDF page duration</div>
+                    <div class="desc">Seconds each PDF page is displayed before auto-advancing.</div>
+                </div>
+                <input type="number" name="pdf_page_duration" min="2" max="120"
+                       value="{{ values.pdf_page_duration }}">
+            </div>
+
+            <div class="row">
+                <div>
+                    <div class="label">Shuffle slideshow</div>
+                    <div class="desc">If on, slides cycle in random order instead of file-name order.</div>
+                </div>
+                <div>
+                    <label><input type="checkbox" name="shuffle_slideshow"
+                           {% if values.shuffle_slideshow %}checked{% endif %}> on</label>
+                </div>
+            </div>
+
+            <button type="submit" class="save-btn">💾 Save settings</button>
+        </form>
+    </div>
 </body>
 </html>
 '''

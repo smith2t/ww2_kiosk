@@ -21,9 +21,6 @@ class DisplayMode(Enum):
 
 
 class DisplayController:
-    # Either menu auto-returns to slideshow if untouched for this long.
-    MENU_TIMEOUT_SEC = 30
-
     def __init__(self, settings, store=None):
         self.settings = settings
         self.store = store      # CategoryStore — None disables menus
@@ -106,8 +103,10 @@ class DisplayController:
         self.menu_shown_at = time.time()
 
     def menu_expired(self) -> bool:
+        # Read from settings each call so /settings edits take effect live.
+        timeout = getattr(self.settings.display, 'menu_timeout_sec', 30)
         return (self.current_mode in (DisplayMode.CATEGORY_MENU, DisplayMode.ITEM_MENU)
-                and time.time() - self.menu_shown_at > self.MENU_TIMEOUT_SEC)
+                and time.time() - self.menu_shown_at > timeout)
         
     async def play_video(self, video_path):
         """Play a specific video"""

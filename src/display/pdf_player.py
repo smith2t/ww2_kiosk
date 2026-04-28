@@ -16,13 +16,16 @@ logger = logging.getLogger(__name__)
 
 
 class PdfPlayer:
-    PAGE_DURATION_SEC = 8
-
     def __init__(self, settings):
         self.settings = settings
         self.screen = None
         self.is_playing = False
         self._stop_event: asyncio.Event | None = None
+
+    @property
+    def page_duration_sec(self) -> float:
+        # Read from settings each play so /settings edits take effect live.
+        return max(1.0, float(getattr(self.settings.display, 'pdf_page_duration', 8)))
 
     async def initialize(self):
         # Surface fetched lazily on each play() because the slideshow may
@@ -59,7 +62,7 @@ class PdfPlayer:
 
                 try:
                     await asyncio.wait_for(self._stop_event.wait(),
-                                           timeout=self.PAGE_DURATION_SEC)
+                                           timeout=self.page_duration_sec)
                     break  # got an explicit stop
                 except asyncio.TimeoutError:
                     continue  # page duration elapsed, advance

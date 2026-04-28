@@ -185,8 +185,9 @@ class WW2Kiosk:
             return
 
     async def _show_countdown(self, button_id):
-        """Show countdown before video starts"""
-        countdown_time = 3  # 3 second countdown
+        """Show countdown before video starts. Length is set by
+        display.countdown_sec in config and editable from /settings."""
+        countdown_time = max(0, int(getattr(self.settings.display, 'countdown_sec', 3)))
         logger.info(f"Starting video {button_id} in {countdown_time} seconds...")
 
         for i in range(countdown_time, 0, -1):
