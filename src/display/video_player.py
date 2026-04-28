@@ -6,6 +6,16 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _is_raspberry_pi():
+    try:
+        return "Raspberry Pi" in Path("/proc/device-tree/model").read_text(errors="ignore")
+    except Exception:
+        return False
+
+
+_IS_PI = _is_raspberry_pi()
+
+
 class VideoPlayer:
     def __init__(self, settings):
         self.settings = settings
@@ -46,21 +56,36 @@ class VideoPlayer:
         # Build command based on player. mpv is the recommended choice — no
         # first-run privacy dialog, lighter than VLC, designed for embedded use.
         if self.player_cmd == "mpv":
-            cmd = [
-                "mpv",
-                "--fullscreen",
-                "--ontop",
-                "--hwdec=auto-copy",              # H618 hardware H.264 decode
+            if _IS_PI:
+                # Raspberry Pi 5: real V4L2 M2M hardware decode + working KMS
+                # GPU output. Fullscreen with hwdec is buttery smooth.
+                cmd = [
+                    "mpv",
+                    "--fullscreen",
+                    "--ontop",
+                    "--hwdec=auto-copy",
+                ]
+            else:
+                # Allwinner H618 / Orange Pi: no usable hwdec, EGL/DRI2 auth
+                # fails so we end up on SDL software output. Fullscreen choppy
+                # at 1080p; windowed 1280x720 cuts per-frame work ~55%.
+                cmd = [
+                    "mpv",
+                    "--geometry=1280x720+320+180",
+                    "--no-border",
+                    "--ontop",
+                    "--hwdec=auto-copy",
+                ]
+            cmd.extend([
                 "--no-osc",
                 "--no-osd-bar",
                 "--no-input-default-bindings",
                 "--no-input-cursor",
                 "--cursor-autohide=always",
-                # Note: --really-quiet removed so we can see decode errors in logs
-                "--msg-level=all=warn",           # quieter than info, louder than really-quiet
+                "--msg-level=all=error",
                 "--no-terminal",
                 str(video_file),
-            ]
+            ])
         elif self.player_cmd == "omxplayer":
             cmd = [
                 "omxplayer",

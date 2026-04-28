@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -10,8 +11,33 @@ ORANGEPI_GPIO = False
 SYSFS_GPIO = False
 GPIO_AVAILABLE = False
 
-# Force using our custom sysfs GPIO implementation for OrangePi
+
+def _is_raspberry_pi():
+    """Detect a Raspberry Pi so we skip the Allwinner-specific sysfs path."""
+    try:
+        return "Raspberry Pi" in Path("/proc/device-tree/model").read_text(errors="ignore")
+    except Exception:
+        return False
+
+
+_IS_PI = _is_raspberry_pi()
+
+if _IS_PI:
+    # Raspberry Pi: go straight to gpiozero. Don't try OrangePi.GPIO (wrong
+    # board) or RPi.GPIO (doesn't support Pi 5's RP1 chip) since they would
+    # import successfully but break or use the wrong pin numbering.
+    try:
+        from gpiozero import Button
+        from gpiozero.exc import GPIOZeroError
+        GPIO_AVAILABLE = True
+        logger.info("Raspberry Pi detected — using gpiozero")
+    except ImportError:
+        logger.error("gpiozero unavailable on Raspberry Pi — install python3-gpiozero")
+        GPIO_AVAILABLE = False
+# Allwinner / non-Pi fallback chain (skipped if _IS_PI handled above).
 try:
+    if _IS_PI:
+        raise ImportError("Pi already handled above")
     from .orangepi_gpio import OrangePiButton, is_sysfs_gpio_available
     if is_sysfs_gpio_available():
         GPIO_AVAILABLE = True
@@ -76,6 +102,11 @@ class GPIOController:
         # Callback for button press events
         self.on_button_press = None
 
+        # asyncio event loop captured at initialize() time so we can schedule
+        # coroutines from gpiozero's background callback thread (where
+        # asyncio.create_task() throws because no loop is running there).
+        self._loop = None
+
         # GPIO pin configuration
         self.button_pins = {
             1: settings.input.button1_pin,
@@ -90,6 +121,10 @@ class GPIOController:
         
     async def initialize(self):
         """Initialize GPIO pins"""
+        # Capture the running asyncio loop so callbacks fired from gpiozero's
+        # background thread can schedule coroutines back onto it.
+        self._loop = asyncio.get_running_loop()
+
         if ORANGEPI_GPIO:
             logger.info("Initializing GPIO controller (OrangePi compatible)")
         else:
@@ -186,19 +221,30 @@ class GPIOController:
             logger.error(f"Failed to setup sysfs button {button_id} on GPIO {pin}: {e}")
 
     def _button_callback(self, button_id: int, pin: int):
-        """Handle button press interrupt for Raspberry Pi"""
-        # Check debouncer (additional software debounce)
+        """Handle button press from gpiozero (runs in gpiozero's worker thread)."""
         if not self.debouncer.should_process(button_id):
             return
 
         logger.info(f"Button {button_id} pressed (GPIO {pin})")
 
-        # Flash LED for button feedback
-        asyncio.create_task(self.led_controller.flash_led(button_id, 0.3))
+        # We are in a non-asyncio thread; schedule coroutines onto the main
+        # event loop with run_coroutine_threadsafe (asyncio.create_task here
+        # would throw "no running event loop").
+        if self._loop is None:
+            return
 
-        # Call the registered callback
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.led_controller.flash_led(button_id, 0.3), self._loop)
+        except Exception as e:
+            logger.error(f"Failed to schedule LED flash for button {button_id}: {e}")
+
         if self.on_button_press:
-            asyncio.create_task(self.on_button_press(button_id))
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.on_button_press(button_id), self._loop)
+            except Exception as e:
+                logger.error(f"Failed to schedule on_button_press for {button_id}: {e}")
 
     def _sysfs_callback(self, button_id: int, pin: int):
         """Handle button press for sysfs GPIO"""

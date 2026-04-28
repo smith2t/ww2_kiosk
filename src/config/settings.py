@@ -54,11 +54,17 @@ class NetworkSettings:
     web_port: int = 8080
 
 
+# Repo root is two parents above this file (src/config/settings.py -> repo).
+# Resolves correctly on any host (Orange Pi, Pi 5, Mac dev, etc.) instead of
+# baking in /home/orangepi.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 @dataclass
 class ConfigSettings:
-    config_file: str = "/home/orangepi/ww2_kiosk-main/config/config.yaml"
-    button_mappings_file: str = "/home/orangepi/ww2_kiosk-main/config/button_mappings.json"
-    playlists_file: str = "/home/orangepi/ww2_kiosk-main/config/playlists.json"
+    config_file: str = str(_REPO_ROOT / "config" / "config.yaml")
+    button_mappings_file: str = str(_REPO_ROOT / "config" / "button_mappings.json")
+    playlists_file: str = str(_REPO_ROOT / "config" / "playlists.json")
 
 
 @dataclass

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from pathlib import Path
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -9,8 +10,31 @@ SYSFS_GPIO = False
 ORANGEPI_GPIO = False
 GPIO_AVAILABLE = False
 
-# Try different GPIO libraries for LED control
+
+def _is_raspberry_pi():
+    try:
+        return "Raspberry Pi" in Path("/proc/device-tree/model").read_text(errors="ignore")
+    except Exception:
+        return False
+
+
+_IS_PI = _is_raspberry_pi()
+
+if _IS_PI:
+    # Pi: go straight to gpiozero. Skip OrangePi.GPIO and RPi.GPIO — they'd
+    # import OK but Pi 5's RP1 chip isn't supported by RPi.GPIO.
+    try:
+        from gpiozero import LED
+        from gpiozero.exc import GPIOZeroError
+        GPIO_AVAILABLE = True
+        logger.info("Raspberry Pi detected — using gpiozero for LEDs")
+    except ImportError:
+        logger.error("gpiozero unavailable — install python3-gpiozero")
+
+# Allwinner / non-Pi fallback chain.
 try:
+    if _IS_PI:
+        raise ImportError("Pi already handled above")
     from .orangepi_gpio import OrangePiLED, is_sysfs_gpio_available
     if is_sysfs_gpio_available():
         GPIO_AVAILABLE = True
@@ -89,6 +113,15 @@ class LEDController:
 
         if not GPIO_AVAILABLE:
             logger.warning("GPIO not available - LED control running in mock mode")
+            return
+
+        if _IS_PI:
+            # On Pi, display.led_controller already owns the LED pins via
+            # gpiozero (it ran first in main.initialize). gpiozero requires
+            # exclusive ownership, so we'd just collide. Stay out — flash_led
+            # becomes a no-op; user-facing button feedback comes from
+            # display.led_controller.button_feedback() instead.
+            logger.info("Pi detected — input LED controller deferring to display LED controller")
             return
 
         try:

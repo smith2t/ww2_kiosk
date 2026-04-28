@@ -98,12 +98,12 @@ class DisplayController:
         await self.start_slideshow()
         
     def should_return_to_slideshow(self):
-        """Check if idle timeout has been reached"""
-        if self.current_mode != DisplayMode.VIDEO:
-            return False
-            
-        time_since_activity = time.time() - self.last_activity
-        return time_since_activity > self.idle_timeout
+        """Idle-timeout return is no longer the right mechanism — _video_end_handler
+        already restarts the slideshow when mpv exits naturally. Returning True
+        here while a video is playing forcibly killed mpv mid-clip after 30 sec.
+        Kept as a no-op so the main run-loop's call site doesn't need to change.
+        """
+        return False
         
     async def cleanup(self):
         """Clean up display resources"""

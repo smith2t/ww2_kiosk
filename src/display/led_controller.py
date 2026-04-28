@@ -12,13 +12,23 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _is_raspberry_pi():
+    try:
+        return "Raspberry Pi" in Path("/proc/device-tree/model").read_text(errors="ignore")
+    except Exception:
+        return False
+
+
+_USE_GPIOZERO = _is_raspberry_pi()
+
+
 class LEDController:
     """Control LEDs for visual feedback during initialization"""
 
     def __init__(self, settings):
         self.settings = settings
         self.led_pins = {
-            1: getattr(settings.display, 'led1_pin', 18),  # Default LED pins
+            1: getattr(settings.display, 'led1_pin', 18),
             2: getattr(settings.display, 'led2_pin', 19),
             3: getattr(settings.display, 'led3_pin', 20),
             4: getattr(settings.display, 'led4_pin', 21),
@@ -26,6 +36,10 @@ class LEDController:
 
         self.gpio_base = Path("/sys/class/gpio")
         self.exported_pins = set()
+        # On Pi we drive LEDs via gpiozero.LED objects; on Allwinner we fall
+        # back to direct sysfs writes (gpiozero's RPi-only backends don't help
+        # there). This dict stays empty unless we're on a Pi.
+        self._gz_leds: dict = {}
         self.led_states = {1: False, 2: False, 3: False, 4: False}
         self.animation_running = False
         # Separate flag for the long-lived slideshow breathing animation so
@@ -36,20 +50,30 @@ class LEDController:
         """Initialize LED controller"""
         logger.info("Initializing LED controller...")
 
+        if _USE_GPIOZERO:
+            try:
+                from gpiozero import LED
+                for led_id, pin in self.led_pins.items():
+                    self._gz_leds[led_id] = LED(pin, initial_value=False)
+                    self.exported_pins.add(pin)
+                    logger.debug(f"LED {led_id} configured on BCM {pin} (gpiozero)")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to init gpiozero LEDs: {e}")
+                return False
+
+        # Allwinner / sysfs fallback
         try:
-            # Export and configure LED pins
             for led_id, pin in self.led_pins.items():
                 if await self._export_pin(pin):
                     if await self._set_direction(pin, "out"):
-                        await self._set_led(led_id, False)  # Start with LEDs off
+                        await self._set_led(led_id, False)
                         logger.debug(f"LED {led_id} initialized on GPIO {pin}")
                     else:
                         logger.warning(f"Failed to set direction for LED {led_id} on GPIO {pin}")
                 else:
                     logger.warning(f"Failed to export LED {led_id} on GPIO {pin}")
-
             return len(self.exported_pins) > 0
-
         except Exception as e:
             logger.error(f"Failed to initialize LED controller: {e}")
             return False
@@ -107,17 +131,34 @@ class LEDController:
     async def _set_led(self, led_id: int, state: bool) -> bool:
         """Set LED state (on/off).
 
-        Writes directly to sysfs and trusts _write_value's file-exists check.
-        Previously gated on self.exported_pins, but that in-memory set falls
-        out of sync with reality when input.led_controller exports the pin
-        after we tried and failed — leaving the LED silently dark forever.
+        On Raspberry Pi, drives via gpiozero.LED. On Orange Pi, writes
+        directly to sysfs (gpiozero's lgpio/RPi.GPIO backends aren't usable
+        there).
         """
-        if led_id in self.led_pins:
-            pin = self.led_pins[led_id]
-            success = await self._write_value(pin, 1 if state else 0)
-            if success:
+        if led_id not in self.led_pins:
+            return False
+
+        if _USE_GPIOZERO:
+            led = self._gz_leds.get(led_id)
+            if led is None:
+                return False
+            try:
+                if state:
+                    led.on()
+                else:
+                    led.off()
                 self.led_states[led_id] = state
-            return success
+                return True
+            except Exception as e:
+                logger.debug(f"gpiozero set LED {led_id} failed: {e}")
+                return False
+
+        # sysfs path (Allwinner)
+        pin = self.led_pins[led_id]
+        success = await self._write_value(pin, 1 if state else 0)
+        if success:
+            self.led_states[led_id] = state
+        return success
         return False
 
     async def set_led(self, led_id: int, state: bool):
