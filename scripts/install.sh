@@ -50,6 +50,7 @@ apt-get install -y --no-install-recommends \
     lightdm \
     network-manager \
     samba samba-common-bin \
+    libreoffice-impress libreoffice-core \
     >/dev/null
 
 # 2) Python venv + requirements -----------------------------------------
@@ -112,6 +113,9 @@ autologin-user=$KIOSK_USER
 autologin-user-timeout=0
 autologin-session=ww2-kiosk
 user-session=ww2-kiosk
+# Start X without a mouse cursor — the kiosk is driven by arcade buttons
+# only, and a centered pointer is distracting on the slideshow.
+xserver-command=X -nocursor
 LDM
 
 # Ensure the global lightdm.conf isn't forcing a different session.

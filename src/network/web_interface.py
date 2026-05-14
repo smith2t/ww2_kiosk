@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import threading
 from pathlib import Path
 from typing import Optional
@@ -86,7 +87,7 @@ class WebInterface:
                     return redirect(request.url)
 
                 target_dir = self.media_dir if upload_type == 'media' else self.video_dir
-                saved, skipped = [], []
+                saved, skipped, converted, failed_convert = [], [], [], []
 
                 for f in files:
                     # Folder uploads preserve relative paths in filename
@@ -97,12 +98,34 @@ class WebInterface:
                         skipped.append(base)
                         continue
                     safe = secure_filename(base)
-                    f.save(str(target_dir / safe))
-                    saved.append(safe)
+                    saved_path = target_dir / safe
+                    f.save(str(saved_path))
+
+                    # PPTX/PPT can't be played natively — convert to PDF on
+                    # upload so they flow through the PDF pipeline. The
+                    # original is removed; the picker sees only the PDF.
+                    if safe.lower().rsplit('.', 1)[-1] in ('pptx', 'ppt'):
+                        pdf_path = self._convert_pptx_to_pdf(saved_path)
+                        if pdf_path is not None:
+                            try:
+                                saved_path.unlink()
+                            except OSError:
+                                pass
+                            converted.append(pdf_path.name)
+                        else:
+                            failed_convert.append(safe)
+                    else:
+                        saved.append(safe)
 
                 if saved:
                     flash(f'Uploaded {len(saved)} file(s): {", ".join(saved[:5])}'
                           + (f' and {len(saved) - 5} more' if len(saved) > 5 else ''))
+                if converted:
+                    flash(f'Converted PPTX → PDF: {", ".join(converted[:5])}'
+                          + (f' and {len(converted) - 5} more' if len(converted) > 5 else ''))
+                if failed_convert:
+                    flash(f'PPTX conversion failed for: {", ".join(failed_convert)}. '
+                          'Check that LibreOffice is installed (soffice in PATH).')
                 if skipped:
                     flash(f'Skipped {len(skipped)} file(s) with invalid type: '
                           + ", ".join(skipped[:3])
@@ -159,6 +182,14 @@ class WebInterface:
                     logger.error(f"Saving {cfg_path} failed: {e}")
                     flash(f'Save failed: {e}')
 
+                # AP credentials are stored in NetworkManager, not config.yaml.
+                # Blank password field means "keep existing"; SSID is always
+                # required.
+                self._apply_ap_credentials(
+                    request.form.get('ap_ssid', '').strip(),
+                    request.form.get('ap_password', ''),
+                )
+
                 return redirect(url_for('settings_page'))
 
             # GET: render the form pre-populated with current values.
@@ -171,6 +202,7 @@ class WebInterface:
                     'countdown_sec':      getattr(d, 'countdown_sec', 3),
                     'pdf_page_duration':  getattr(d, 'pdf_page_duration', 8),
                     'shuffle_slideshow':  getattr(d, 'shuffle_slideshow', True),
+                    'ap_ssid':            self._read_ap_ssid(),
                 },
             )
 
@@ -335,6 +367,115 @@ class WebInterface:
 
         ext = filename.rsplit('.', 1)[1].lower()
         return ext in allowed_extensions.get(upload_type, set())
+
+    _AP_PROFILE = "ww2-kiosk-ap"
+
+    def _read_ap_ssid(self) -> str:
+        """Read the current AP SSID from NetworkManager. Returns "" if the
+        profile doesn't exist (fresh image / AP fallback not installed)."""
+        try:
+            result = subprocess.run(
+                ['nmcli', '-t', '-g', '802-11-wireless.ssid',
+                 'c', 'show', self._AP_PROFILE],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return ""
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
+
+    def _apply_ap_credentials(self, new_ssid: str, new_psk: str) -> None:
+        """Update the NM AP profile's SSID and/or PSK. Blank PSK is treated
+        as "leave unchanged". New values take effect next time the AP
+        activates — this does not bounce the AP, so an admin currently
+        connected via AP stays connected on the old credentials until they
+        reconnect."""
+        if not new_ssid:
+            flash('AP SSID is required.')
+            return
+
+        if len(new_ssid) > 32:
+            flash('AP SSID must be 32 characters or fewer.')
+            return
+
+        if new_psk and not (8 <= len(new_psk) <= 63):
+            flash('AP password must be 8–63 characters (WPA2 requirement).')
+            return
+
+        current_ssid = self._read_ap_ssid()
+        changes = []
+
+        if new_ssid != current_ssid and current_ssid != "":
+            ok = self._nmcli_modify('802-11-wireless.ssid', new_ssid)
+            if ok:
+                changes.append(f'SSID → {new_ssid}')
+            else:
+                flash('Failed to update AP SSID — check journalctl for nmcli errors.')
+                return
+        elif current_ssid == "":
+            flash('AP profile not found on this kiosk — run install_ap_fallback.sh first.')
+            return
+
+        if new_psk:
+            ok = self._nmcli_modify('wifi-sec.psk', new_psk)
+            if ok:
+                changes.append('password updated')
+            else:
+                flash('Failed to update AP password — check journalctl for nmcli errors.')
+                return
+
+        if changes:
+            flash(f'AP credentials saved ({", ".join(changes)}). Changes apply on next AP activation.')
+
+    def _nmcli_modify(self, key: str, value: str) -> bool:
+        """Run `sudo nmcli c modify <profile> <key> <value>` for the AP profile.
+        Requires the sysadmin sudoers entry in /etc/sudoers.d/ww2-kiosk-nmcli."""
+        try:
+            result = subprocess.run(
+                ['sudo', '-n', 'nmcli', 'c', 'modify', self._AP_PROFILE, key, value],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.error(f"nmcli modify {key} failed: {e}")
+            return False
+        if result.returncode != 0:
+            logger.error(f"nmcli modify {key} returned {result.returncode}: {result.stderr.strip()}")
+            return False
+        return True
+
+    def _convert_pptx_to_pdf(self, pptx_path: Path) -> Optional[Path]:
+        """Convert a PowerPoint file to PDF using LibreOffice headless.
+
+        Returns the resulting PDF path on success (in the same directory as
+        the source), or None if conversion fails. soffice is slow (10–30s
+        per deck) so callers should expect the upload request to block.
+        """
+        out_dir = pptx_path.parent
+        try:
+            result = subprocess.run(
+                ['soffice', '--headless', '--convert-to', 'pdf',
+                 '--outdir', str(out_dir), str(pptx_path)],
+                capture_output=True, text=True, timeout=120,
+            )
+        except FileNotFoundError:
+            logger.error("soffice (LibreOffice) not found in PATH — install libreoffice-impress")
+            return None
+        except subprocess.TimeoutExpired:
+            logger.error(f"soffice timed out converting {pptx_path.name}")
+            return None
+
+        if result.returncode != 0:
+            logger.error(f"soffice failed on {pptx_path.name}: {result.stderr.strip()}")
+            return None
+
+        pdf_path = out_dir / (pptx_path.stem + '.pdf')
+        if not pdf_path.exists():
+            logger.error(f"soffice returned success but {pdf_path.name} not found")
+            return None
+
+        logger.info(f"Converted {pptx_path.name} -> {pdf_path.name}")
+        return pdf_path
 
     async def start(self, host='0.0.0.0', port=8080):
         """Start the web interface in a background thread.
@@ -540,7 +681,7 @@ UPLOAD_TEMPLATE = '''
             <div class="form-group">
                 <label for="upload_type">File Type:</label>
                 <select name="upload_type" id="upload_type" onchange="updateFileTypes()">
-                    <option value="media">Slideshow Media (Images, PDFs, PowerPoint)</option>
+                    <option value="media">Pictures & Documents (images for slideshow, PDFs/PowerPoint for category items)</option>
                     <option value="video">Button Videos (MP4, AVI, etc.)</option>
                 </select>
             </div>
@@ -557,6 +698,12 @@ UPLOAD_TEMPLATE = '''
             <div class="file-types" id="file-types">
                 <strong>Supported formats:</strong><br>
                 <span id="supported-formats">Images: JPG, PNG, GIF, BMP<br>Documents: PDF, PowerPoint (.pptx, .ppt)</span>
+                <div id="conversion-note" style="margin-top:8px; padding:8px 10px; background:#fff4cc; border:1px solid #e6c200; border-radius:4px; color:#5c4a00; font-size:13px;">
+                    ⚠️ <strong>PowerPoint (.pptx / .ppt) files are auto-converted to PDF on upload.</strong>
+                    Conversion takes about 10–30 seconds per deck — the upload page will appear
+                    to hang while LibreOffice runs. The original .pptx is removed; only the resulting
+                    .pdf appears in the category picker.
+                </div>
             </div>
 
             <button type="submit" class="upload-btn">📤 Upload Files</button>
@@ -567,11 +714,14 @@ UPLOAD_TEMPLATE = '''
         function updateFileTypes() {
             const uploadType = document.getElementById('upload_type').value;
             const formatsSpan = document.getElementById('supported-formats');
+            const note = document.getElementById('conversion-note');
 
             if (uploadType === 'media') {
                 formatsSpan.innerHTML = 'Images: JPG, PNG, GIF, BMP<br>Documents: PDF, PowerPoint (.pptx, .ppt)';
+                note.style.display = '';
             } else {
                 formatsSpan.innerHTML = 'Videos: MP4, AVI, MKV, MOV';
+                note.style.display = 'none';
             }
         }
 
@@ -954,6 +1104,32 @@ SETTINGS_TEMPLATE = '''
                     <label><input type="checkbox" name="shuffle_slideshow"
                            {% if values.shuffle_slideshow %}checked{% endif %}> on</label>
                 </div>
+            </div>
+
+            <h2 style="margin-top:30px; color:#333; border-bottom:1px solid #ddd; padding-bottom:6px;">📶 WiFi Access Point</h2>
+            <p class="help">Used when home WiFi is unavailable for 90 s, or whenever
+                an admin connects locally to manage the kiosk. Changes take effect
+                on the next AP activation — connected clients keep the old credentials
+                until they reconnect.</p>
+
+            <div class="row">
+                <div>
+                    <div class="label">AP network name (SSID)</div>
+                    <div class="desc">Up to 32 characters. Shown on phone/laptop WiFi lists.</div>
+                </div>
+                <input type="text" name="ap_ssid" maxlength="32" required
+                       value="{{ values.ap_ssid }}"
+                       style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; font:inherit; text-align:right;">
+            </div>
+
+            <div class="row">
+                <div>
+                    <div class="label">AP password</div>
+                    <div class="desc">8–63 characters (WPA2). Leave blank to keep the current password.</div>
+                </div>
+                <input type="password" name="ap_password" minlength="8" maxlength="63"
+                       autocomplete="new-password" placeholder="(unchanged)"
+                       style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; font:inherit; text-align:right;">
             </div>
 
             <button type="submit" class="save-btn">💾 Save settings</button>

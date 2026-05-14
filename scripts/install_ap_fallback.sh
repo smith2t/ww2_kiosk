@@ -36,6 +36,11 @@ cat > /usr/local/bin/kiosk-net-watchdog <<'SH'
 #!/bin/bash
 # Drop into AP mode when home WiFi is missing for >90 sec; drop AP when
 # home WiFi reappears.
+#
+# "has_client" requires an actual IPv4 lease on wlan0 (non-AP address),
+# not just a NetworkManager "active" profile — NM keeps a profile active
+# during reconnect attempts even when the radio is unreachable, which
+# previously kept the watchdog from tripping on transient wifi loss.
 
 set -u
 AP_NAME="ww2-kiosk-ap"
@@ -50,7 +55,9 @@ log "watchdog starting (interval ${CHECK_INTERVAL}s, threshold ${THRESHOLD} cycl
 
 while sleep "$CHECK_INTERVAL"; do
     in_ap=$(nmcli -t -f NAME c show --active | grep -c "^${AP_NAME}$" || true)
-    has_client=$(nmcli -t -f NAME,TYPE c show --active | grep ":802-11-wireless$" | grep -cv "^${AP_NAME}:" || true)
+    # Count non-AP IPv4 addresses on wlan0. The "10.42." exclude keeps the
+    # AP's own address from being counted as a client lease.
+    has_client=$(ip -4 -o addr show dev wlan0 2>/dev/null | grep -v " 10\.42\." | grep -c "inet " || true)
 
     if [ "$has_client" -gt 0 ]; then
         fail_count=0
@@ -69,7 +76,16 @@ done
 SH
 chmod 755 /usr/local/bin/kiosk-net-watchdog
 
-# 3) systemd service for the watchdog.
+# 3) sudoers fragment so the kiosk's web UI can run `nmcli` to update the
+#    AP SSID/password from the /settings page without a TTY password prompt.
+#    Scoped to nmcli only — the rest of sudo still requires a password.
+KIOSK_USER="${KIOSK_USER:-sysadmin}"
+cat > /etc/sudoers.d/ww2-kiosk-nmcli <<SUDOERS
+${KIOSK_USER} ALL=(root) NOPASSWD: /usr/bin/nmcli
+SUDOERS
+chmod 440 /etc/sudoers.d/ww2-kiosk-nmcli
+
+# 4) systemd service for the watchdog.
 cat > /etc/systemd/system/kiosk-net-watchdog.service <<'UNIT'
 [Unit]
 Description=WW2 Kiosk network watchdog (auto-AP fallback)

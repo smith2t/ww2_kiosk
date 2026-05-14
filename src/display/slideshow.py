@@ -1,15 +1,11 @@
 import asyncio
 import logging
 import random
-import tempfile
 from pathlib import Path
 from typing import List
 
 import pygame
 from PIL import Image
-import PyPDF2
-from pptx import Presentation
-from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +23,7 @@ class Slideshow:
 
         self.screen = None
         self.clock = None
-        self.temp_dir = tempfile.mkdtemp()  # For converted slides
-        
+
     async def initialize(self):
         """Initialize slideshow display"""
         logger.info("Initializing slideshow")
@@ -65,7 +60,8 @@ class Slideshow:
         await self.scan_slides()
         
     async def scan_slides(self):
-        """Scan for available slides (images, PDFs, PowerPoint)"""
+        """Scan the pictures dir for image slides. PDFs and PPTX are
+        intentionally excluded — those play only as category items."""
         media_dir = Path(self.settings.media.pictures_dir)
 
         if not media_dir.exists():
@@ -73,115 +69,14 @@ class Slideshow:
             return
 
         self.slides = []
-
-        # Scan for images
         for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.gif']:
             self.slides.extend([{'path': p, 'type': 'image'} for p in media_dir.glob(ext)])
             self.slides.extend([{'path': p, 'type': 'image'} for p in media_dir.glob(ext.upper())])
-
-        # Scan for PDFs
-        for ext in ['*.pdf']:
-            pdf_files = list(media_dir.glob(ext)) + list(media_dir.glob(ext.upper()))
-            for pdf_file in pdf_files:
-                pdf_slides = await self._convert_pdf_to_images(pdf_file)
-                self.slides.extend(pdf_slides)
-
-        # Scan for PowerPoint files
-        for ext in ['*.pptx', '*.ppt']:
-            ppt_files = list(media_dir.glob(ext)) + list(media_dir.glob(ext.upper()))
-            for ppt_file in ppt_files:
-                ppt_slides = await self._convert_ppt_to_images(ppt_file)
-                self.slides.extend(ppt_slides)
 
         logger.info(f"Found {len(self.slides)} slides total")
 
         if self.settings.display.shuffle_slideshow:
             random.shuffle(self.slides)
-
-    async def _convert_pdf_to_images(self, pdf_path):
-        """Convert PDF pages to images"""
-        try:
-            import fitz  # PyMuPDF for better PDF rendering
-        except ImportError:
-            logger.warning("PyMuPDF not available, using PyPDF2 (limited functionality)")
-            return await self._convert_pdf_with_pypdf2(pdf_path)
-
-        slides = []
-        try:
-            doc = fitz.open(str(pdf_path))
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                pix = page.get_pixmap()
-                img_data = pix.tobytes("png")
-
-                # Save as temporary image file
-                temp_path = Path(self.temp_dir) / f"{pdf_path.stem}_page_{page_num}.png"
-                with open(temp_path, 'wb') as f:
-                    f.write(img_data)
-
-                slides.append({'path': temp_path, 'type': 'pdf_page', 'source': pdf_path})
-
-            doc.close()
-            logger.info(f"Converted {len(slides)} pages from {pdf_path}")
-        except Exception as e:
-            logger.error(f"Failed to convert PDF {pdf_path}: {e}")
-
-        return slides
-
-    async def _convert_pdf_with_pypdf2(self, pdf_path):
-        """Fallback PDF conversion using PyPDF2 (text only)"""
-        slides = []
-        try:
-            with open(pdf_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                for page_num, page in enumerate(reader.pages):
-                    text = page.extract_text()
-                    if text.strip():
-                        # Create a simple text slide
-                        temp_path = await self._create_text_slide(text, f"{pdf_path.stem}_page_{page_num}")
-                        slides.append({'path': temp_path, 'type': 'pdf_text', 'source': pdf_path})
-
-            logger.info(f"Converted {len(slides)} text pages from {pdf_path}")
-        except Exception as e:
-            logger.error(f"Failed to convert PDF {pdf_path}: {e}")
-
-        return slides
-
-    async def _convert_ppt_to_images(self, ppt_path):
-        """Convert PowerPoint slides to images"""
-        slides = []
-        try:
-            prs = Presentation(str(ppt_path))
-            for slide_num, slide in enumerate(prs.slides):
-                # Extract text from slide
-                text_content = []
-                for shape in slide.shapes:
-                    if hasattr(shape, "text"):
-                        text_content.append(shape.text)
-
-                slide_text = "\n".join(text_content)
-                if slide_text.strip():
-                    temp_path = await self._create_text_slide(slide_text, f"{ppt_path.stem}_slide_{slide_num}")
-                    slides.append({'path': temp_path, 'type': 'ppt_slide', 'source': ppt_path})
-
-            logger.info(f"Converted {len(slides)} slides from {ppt_path}")
-        except Exception as e:
-            logger.error(f"Failed to convert PowerPoint {ppt_path}: {e}")
-
-        return slides
-
-    async def _create_text_slide(self, text, filename):
-        """Create an image from text content"""
-        # Create a simple image with text
-        img_width, img_height = 1920, 1080
-        img = Image.new('RGB', (img_width, img_height), color='white')
-
-        # For now, just create a placeholder - in production you'd want proper text rendering
-        # This would require additional libraries like PIL ImageDraw
-        temp_path = Path(self.temp_dir) / f"{filename}.png"
-        img.save(temp_path)
-
-        return temp_path
 
     async def start(self):
         """Start the slideshow loop.
@@ -339,10 +234,3 @@ class Slideshow:
         await self.stop()
         if pygame.display.get_init():
             pygame.quit()
-
-        # Clean up temporary files
-        import shutil
-        try:
-            shutil.rmtree(self.temp_dir)
-        except Exception as e:
-            logger.warning(f"Failed to clean up temp directory: {e}")
