@@ -4,9 +4,11 @@ import asyncio
 import argparse
 import logging
 import signal
+import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 # Add src directory to Python path
@@ -51,6 +53,9 @@ class WW2Kiosk:
         self.button_lock = threading.Lock()
         self.last_button_press = 0
         self.button_debounce_time = 1.0  # 1 second debounce
+
+        # Recent button history for the hidden shutdown combo (kept short).
+        self._press_history: deque = deque(maxlen=8)
         
     async def initialize(self):
         """Initialize all subsystems"""
@@ -129,6 +134,16 @@ class WW2Kiosk:
             VIDEO          + any-button -> stop playback
         """
         current_time = time.time()
+
+        # Hidden admin shutdown combo — recorded BEFORE the debounce gate so
+        # rapid 1-1-4-1 always counts even when the 1-sec debounce would
+        # drop some presses for normal mode-handling purposes.
+        self._press_history.append((button_id, current_time))
+        if self._is_shutdown_combo():
+            await self._initiate_shutdown()
+            return
+
+        # Debounce for the regular mode-handling path (menus / playback).
         with self.button_lock:
             if current_time - self.last_button_press < self.button_debounce_time:
                 logger.debug(f"Button {button_id} press ignored (debounce)")
@@ -183,6 +198,59 @@ class WW2Kiosk:
                 return
             # 'noop' — empty slot or no items
             return
+
+    def _is_shutdown_combo(self) -> bool:
+        """True iff the recent press history ends with the configured shutdown
+        combo and all those presses happened within shutdown_window_sec."""
+        combo = (self.settings.input.shutdown_combo or "").strip()
+        if not combo:
+            return False
+        window = float(getattr(self.settings.input, 'shutdown_window_sec', 10))
+        n = len(combo)
+        if len(self._press_history) < n:
+            return False
+        last_n = list(self._press_history)[-n:]
+        # Window check on the wall-clock spread of the matching tail.
+        if last_n[-1][1] - last_n[0][1] > window:
+            return False
+        return ''.join(str(b) for b, _ in last_n) == combo
+
+    async def _initiate_shutdown(self):
+        logger.warning("Shutdown combo detected — powering off in 3 seconds")
+
+        # Tear down anything that would keep flipping the pygame surface so
+        # our "Shutting down..." overlay actually stays on screen.
+        try:
+            await self.display_controller.stop_active_media()
+        except Exception as e:
+            logger.warning(f"stop_active_media on shutdown: {e}")
+        try:
+            await self.display_controller.slideshow.stop()
+        except Exception as e:
+            logger.warning(f"slideshow.stop on shutdown: {e}")
+
+        # Show a big "Shutting down..." overlay so an accidental match is
+        # visible before the system actually halts.
+        try:
+            import pygame
+            screen = pygame.display.get_surface()
+            if screen is not None:
+                screen.fill((40, 0, 0))
+                font = pygame.font.SysFont('Arial', 96, bold=True)
+                msg = font.render("Shutting down...", True, (255, 220, 220))
+                screen.blit(msg, msg.get_rect(center=screen.get_rect().center))
+                pygame.display.flip()
+        except Exception as e:
+            logger.warning(f"shutdown overlay failed: {e}")
+
+        # Clear press history so a slow poweroff can't loop into another match.
+        self._press_history.clear()
+
+        await asyncio.sleep(3)
+        try:
+            subprocess.Popen(["sudo", "/sbin/poweroff"])
+        except Exception as e:
+            logger.error(f"poweroff failed: {e}")
 
     async def _show_countdown(self, button_id):
         """Show countdown before video starts. Length is set by

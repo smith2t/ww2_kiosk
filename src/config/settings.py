@@ -34,6 +34,11 @@ class InputSettings:
     button3_pin: int = 70   # Available GPIO for button 3
     button4_pin: int = 71   # Available GPIO for button 4
     debounce_time: int = 50  # milliseconds
+    # Hidden admin shutdown combo. Default 1-1-4-1 (press button 1, 1, 4, 1
+    # within 10 seconds). Changing this requires no code edits — edit the
+    # value in config.yaml. Empty string disables the combo.
+    shutdown_combo: str = "1141"
+    shutdown_window_sec: int = 10
 
 
 @dataclass
