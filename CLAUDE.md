@@ -4,13 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a WW2 Kiosk application running on an **Orange Pi Zero 2 W** (Allwinner H618, 40-pin header — NOT a Raspberry Pi). The kiosk uses a control panel of arcade buttons to choose which video to play. When idle, it flips through a slideshow of pictures after a timeout. The kiosk boots into the main display and starts with the default set of pictures, which can be replaced via SMB over the network with a simple password to prevent tampering. The Pi can run as a WiFi access point so a laptop can join its network to manage it.
+This is a WW2 Kiosk application running on a **Raspberry Pi 5 Model B** (BCM2712, 40-pin header). The kiosk uses a control panel of arcade buttons to choose which video to play. When idle, it flips through a slideshow of pictures after a timeout. The kiosk boots into the main display and starts with the default set of pictures, which can be replaced via the web UI or SMB over the network. The Pi can run as a WiFi access point (auto-fallback when home WiFi is unavailable) so a laptop or phone can join its network to manage it.
 
-**Deployment facts (current as of 2026-04-25):**
-- Project lives at `/home/orangepi/ww2_kiosk-main/` on the Pi (NOT `/home/orangepi/ww2_kiosk-main`)
-- SSH user is `orangepi` (alias `ww2-kiosk` in `~/.ssh/config` on the dev Mac)
-- OS is Debian 11 bullseye, Python 3.9.2
-- systemd service `ww2-kiosk.service` is enabled and starts on boot
+The Orange Pi Zero 2 W (Allwinner H618) is kept as an inactive fallback platform. Code auto-detects via `/proc/device-tree/model` and uses `gpiozero` on Pi 5, sysfs poller on Allwinner.
+
+**Deployment facts (current as of 2026-05-18):**
+- Project lives at `/home/sysadmin/ww2_kiosk-main/` on the Pi 5
+- SSH user is `sysadmin` (alias `pi5` in `~/.ssh/config` on the dev Mac)
+- OS is Debian 12 bookworm, Python 3.11
+- Kiosk starts via lightdm as a custom X session (`ww2-kiosk.desktop`), NOT a systemd service. Auto-respawn is handled by the `while true` loop in `/usr/local/bin/kiosk-session`.
 
 ## Build and Development Commands
 
