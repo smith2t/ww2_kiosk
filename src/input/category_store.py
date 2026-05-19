@@ -28,10 +28,81 @@ category seeded with the old description as the category title.
 import json
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 2
+
+
+class NodeKind(str, Enum):
+    CATEGORY = "category"
+    VIDEO = "video"
+    PDF = "pdf"
+    PICTURESET = "pictureset"
+
+
+@dataclass
+class Node:
+    """Tree node. The set of populated fields depends on `kind`:
+      - CATEGORY   : title, children
+      - VIDEO/PDF  : title, file
+      - PICTURESET : title, files, captions, interval_sec
+    """
+    kind: NodeKind
+    title: str = ""
+    children: List["Node"] = field(default_factory=list)
+    file: str = ""
+    files: List[str] = field(default_factory=list)
+    captions: List[str] = field(default_factory=list)
+    interval_sec: int = 6
+
+
+def node_to_dict(n: Node) -> dict:
+    base = {"kind": n.kind.value, "title": n.title}
+    if n.kind is NodeKind.CATEGORY:
+        base["children"] = [node_to_dict(c) for c in n.children]
+    elif n.kind in (NodeKind.VIDEO, NodeKind.PDF):
+        base["file"] = n.file
+    elif n.kind is NodeKind.PICTURESET:
+        base["files"] = list(n.files)
+        base["captions"] = list(n.captions)
+        base["interval_sec"] = n.interval_sec
+    return base
+
+
+def node_from_dict(d: dict) -> Node:
+    raw_kind = d.get("kind")
+    try:
+        kind = NodeKind(raw_kind)
+    except ValueError as e:
+        raise ValueError(f"unknown kind: {raw_kind!r}") from e
+
+    title = str(d.get("title", ""))
+
+    if kind is NodeKind.CATEGORY:
+        children = [node_from_dict(c) for c in (d.get("children") or [])]
+        return Node(kind=kind, title=title, children=children)
+
+    if kind in (NodeKind.VIDEO, NodeKind.PDF):
+        return Node(kind=kind, title=title, file=str(d.get("file", "")))
+
+    # PICTURESET
+    files = [str(f) for f in (d.get("files") or [])]
+    captions = [str(c) for c in (d.get("captions") or [])]
+    interval = int(d.get("interval_sec", 6))
+    if len(files) < 1:
+        raise ValueError("pictureset requires at least one file")
+    if len(captions) != len(files):
+        raise ValueError(
+            f"pictureset captions length ({len(captions)}) "
+            f"must equal files length ({len(files)})")
+    if not (3 <= interval <= 60):
+        raise ValueError(f"pictureset interval_sec must be 3-60, got {interval}")
+    return Node(kind=kind, title=title, files=files, captions=captions,
+                interval_sec=interval)
 
 DEFAULT_CATEGORY_TITLES = {
     "1": "Category 1 — Blue",
