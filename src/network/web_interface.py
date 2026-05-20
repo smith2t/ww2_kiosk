@@ -11,6 +11,8 @@ from typing import Optional
 from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify
 from werkzeug.utils import secure_filename
 
+from src.media.thumbnailer import ensure_thumbnail
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,10 +114,22 @@ class WebInterface:
                             except OSError:
                                 pass
                             converted.append(pdf_path.name)
+                            # Pre-generate the thumbnail so the catalog editor shows it immediately.
+                            # Failure is non-fatal — the editor falls back to a placeholder.
+                            try:
+                                ensure_thumbnail(pdf_path)
+                            except Exception as e:
+                                logger.warning(f"thumbnail pre-generation failed for {pdf_path}: {e}")
                         else:
                             failed_convert.append(safe)
                     else:
                         saved.append(safe)
+                        # Pre-generate the thumbnail so the catalog editor shows it immediately.
+                        # Failure is non-fatal — the editor falls back to a placeholder.
+                        try:
+                            ensure_thumbnail(saved_path)
+                        except Exception as e:
+                            logger.warning(f"thumbnail pre-generation failed for {saved_path}: {e}")
 
                 if saved:
                     flash(f'Uploaded {len(saved)} file(s): {", ".join(saved[:5])}'

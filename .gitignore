@@ -14,3 +14,6 @@ media/videos/*
 media/pictures/*
 !media/videos/.gitkeep
 !media/pictures/.gitkeep
+
+# Thumbnail cache
+media/.thumbs/
