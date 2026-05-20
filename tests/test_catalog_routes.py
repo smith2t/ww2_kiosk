@@ -157,3 +157,39 @@ def test_pictureset_thumb_endpoint(app_with_store):
         r = c.get(f"/pictureset-thumb/1/{idx}")
         assert r.status_code == 200
         assert r.headers["Content-Type"].startswith("image/")
+
+
+def test_edit_page_lists_media_files_as_dropdown(app_with_store):
+    app, store = app_with_store
+    # Drop real files in the media dirs the editor scans.
+    vids = Path(store.settings.media.videos_dir)
+    (vids / "extra_clip.mp4").write_bytes(b"x")
+    pics = Path(store.settings.media.pictures_dir)
+    (pics / "photo_a.jpg").write_bytes(b"x")
+    with app.test_client() as c:
+        # 1/0 is the D-Day video leaf under EU — its File field is a <select>
+        r = c.get("/settings/catalog/1/0")
+        body = r.data.decode()
+        assert '<select name="file"' in body
+        assert "extra_clip.mp4" in body
+        # the add-child picker on the EU category page lists all files
+        r2 = c.get("/settings/catalog/1")
+        body2 = r2.data.decode()
+        assert "extra_clip.mp4" in body2
+        assert "photo_a.jpg" in body2
+
+
+def test_media_file_lists_splits_by_kind(app_with_store):
+    app, store = app_with_store
+    vids = Path(store.settings.media.videos_dir)
+    pics = Path(store.settings.media.pictures_dir)
+    (vids / "v.mp4").write_bytes(b"x")
+    (pics / "doc.pdf").write_bytes(b"x")
+    (pics / "img.png").write_bytes(b"x")
+    from network.web_interface import WebInterface
+    web = WebInterface(store.settings, store=store, controller=None)
+    lists = web._media_file_lists()
+    assert "v.mp4" in lists["videos"]
+    assert "doc.pdf" in lists["pdfs"]
+    assert "img.png" in lists["pictures"]
+    assert set(lists["all"]) >= {"v.mp4", "doc.pdf", "img.png"}

@@ -300,6 +300,7 @@ class WebInterface:
                 else:
                     child.thumb_url = None
 
+            files = self._media_file_lists()
             return render_template(
                 "catalog_view.html",
                 node=node,
@@ -307,6 +308,10 @@ class WebInterface:
                 breadcrumbs=breadcrumbs,
                 child_paths=child_paths,
                 can_add_subcategory=(len(path) < 2),
+                video_files=files["videos"],
+                pdf_files=files["pdfs"],
+                picture_files=files["pictures"],
+                all_files=files["all"],
                 zip=zip,
             )
 
@@ -470,6 +475,32 @@ class WebInterface:
             if p.exists():
                 return p
         return None
+
+    def _media_file_lists(self) -> dict:
+        """Sorted basenames of media on disk, split by kind, for the catalog
+        editor's file pickers. videos come from videos_dir; PDFs/images from
+        pictures_dir (PDFs may also live in videos_dir)."""
+        from pathlib import Path
+        vdir = Path(self.settings.media.videos_dir)
+        pdir = Path(self.settings.media.pictures_dir)
+        video_exts = {'.mp4', '.avi', '.mkv', '.mov', '.webm'}
+        image_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.gif'}
+
+        def names(d, exts):
+            if not d.exists():
+                return []
+            return sorted(p.name for p in d.iterdir()
+                          if p.is_file() and p.suffix.lower() in exts)
+
+        videos = names(vdir, video_exts)
+        pdfs = sorted(set(names(vdir, {'.pdf'}) + names(pdir, {'.pdf'})))
+        pictures = names(pdir, image_exts)
+        return {
+            "videos": videos,
+            "pdfs": pdfs,
+            "pictures": pictures,
+            "all": sorted(set(videos + pdfs + pictures)),
+        }
 
     def _load_button_data(self) -> dict:
         """Return both mappings and descriptions; gracefully handles old files

@@ -38,16 +38,42 @@
     <p><label>Title:</label>
       <input type="text" name="title" value="{{ node.title or '' }}"></p>
     {% if node.kind.value in ('video','pdf') %}
+      {% set opts = video_files if node.kind.value == 'video' else pdf_files %}
       <p><label>File:</label>
-        <input type="text" name="file" value="{{ node.file or '' }}"></p>
+        <select name="file">
+          {% for f in opts %}
+            <option value="{{ f }}" {% if f == node.file %}selected{% endif %}>{{ f }}</option>
+          {% endfor %}
+          {% if node.file and node.file not in opts %}
+            <option value="{{ node.file }}" selected>{{ node.file }} (missing from media)</option>
+          {% endif %}
+          {% if not opts and not node.file %}
+            <option value="">— no {{ node.kind.value }} files uploaded —</option>
+          {% endif %}
+        </select></p>
     {% endif %}
     {% if node.kind.value == 'pictureset' %}
       <p><label>Interval (sec):</label>
         <input type="number" name="interval_sec" value="{{ node.interval_sec }}" min="3" max="60"></p>
-      <p><label>Files (one per line):</label><br>
-        <textarea name="files" rows="6" cols="50">{{ node.files|join('\n') }}</textarea></p>
+      <p><label>Add pictures:</label>
+        <select id="picpick" multiple size="6">
+          {% for f in picture_files %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+        </select>
+        <button type="button" onclick="appendPics()">Add selected &rarr;</button></p>
+      <p><label>Files (one per line, in play order):</label><br>
+        <textarea id="pf" name="files" rows="6" cols="50">{{ node.files|join('\n') }}</textarea></p>
       <p><label>Captions (one per line, blank line for none):</label><br>
         <textarea name="captions" rows="6" cols="50">{{ node.captions|join('\n') }}</textarea></p>
+      <script>
+      function appendPics() {
+        const sel = document.getElementById('picpick');
+        const ta = document.getElementById('pf');
+        const chosen = Array.from(sel.selectedOptions).map(o => o.value);
+        if (!chosen.length) return;
+        const cur = ta.value.trim();
+        ta.value = (cur ? cur + '\n' : '') + chosen.join('\n');
+      }
+      </script>
     {% endif %}
     <p><button class="primary" type="submit">Save</button></p>
   </form>
@@ -90,7 +116,10 @@
           {% if can_add_subcategory %}<option value="category">Sub-category</option>{% endif %}
         </select>
         <input type="text" name="title" placeholder="Title" required>
-        <input type="text" name="file" placeholder="filename.mp4 (for video/PDF)">
+        <select name="file">
+          <option value="">— pick a file (video / PDF / first picture) —</option>
+          {% for f in all_files %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+        </select>
         <button class="primary" type="submit">Add</button>
       </form>
       {% if not can_add_subcategory %}
