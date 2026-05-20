@@ -470,6 +470,29 @@ class WebInterface:
                 abort(404)
             return send_file(thumb, mimetype="image/png")
 
+        @self.app.route("/pictureset-thumb/<path:catalog_path>")
+        def serve_pictureset_thumb(catalog_path):
+            from flask import send_file, abort
+            from pathlib import Path
+            from src.input.category_store import parse_path, NodeKind
+            from src.media.thumbnailer import compose_pictureset_thumbnail, _cache_dir
+            import hashlib
+            try:
+                path = parse_path(catalog_path)
+            except ValueError:
+                abort(404)
+            node = self.store.resolve(path)
+            if node is None or node.kind is not NodeKind.PICTURESET:
+                abort(404)
+            pics_dir = Path(self.settings.media.pictures_dir)
+            file_paths = [pics_dir / f for f in node.files]
+            key = hashlib.sha1(("|".join(node.files)).encode("utf-8")).hexdigest()
+            out = _cache_dir(pics_dir / "x") / f"pictureset-{key}.png"
+            if not out.exists():
+                if compose_pictureset_thumbnail(file_paths, out) is None:
+                    abort(500)
+            return send_file(out, mimetype="image/png")
+
         @self.app.route('/api/status')
         def api_status():
             """API endpoint for kiosk status"""

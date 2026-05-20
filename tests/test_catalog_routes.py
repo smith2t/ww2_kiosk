@@ -137,3 +137,23 @@ def test_reorder_rejects_bad_permutation(app_with_store):
     with app.test_client() as c:
         r = c.post("/settings/catalog/1/reorder", json={"order": [0, 0]})
         assert r.status_code == 400
+
+
+def test_pictureset_thumb_endpoint(app_with_store):
+    app, store = app_with_store
+    pics_dir = Path(store.settings.media.pictures_dir)
+    pics_dir.mkdir(parents=True, exist_ok=True)
+    for i, color in enumerate([(200, 50, 50), (50, 200, 50)]):
+        from PIL import Image
+        Image.new("RGB", (640, 360), color).save(pics_dir / f"p{i}.jpg")
+    leaf = Node(kind=NodeKind.PICTURESET, title="Set",
+                files=["p0.jpg", "p1.jpg"], captions=["", ""], interval_sec=6)
+    eu = store.get_root_slot(1)
+    eu.children.append(leaf)
+    store.save()
+    idx = len(eu.children) - 1
+
+    with app.test_client() as c:
+        r = c.get(f"/pictureset-thumb/1/{idx}")
+        assert r.status_code == 200
+        assert r.headers["Content-Type"].startswith("image/")
