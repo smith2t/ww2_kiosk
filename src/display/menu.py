@@ -13,7 +13,7 @@ from typing import List, Optional
 
 import pygame
 
-from src.input.category_store import NodeKind
+from input.category_store import NodeKind
 
 logger = logging.getLogger(__name__)
 

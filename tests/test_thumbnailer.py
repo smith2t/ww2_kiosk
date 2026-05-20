@@ -2,7 +2,7 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
-from src.media.thumbnailer import ensure_thumbnail, THUMB_SIZE
+from media.thumbnailer import ensure_thumbnail, THUMB_SIZE
 
 
 @pytest.fixture
@@ -102,7 +102,7 @@ def test_video_thumbnail_failure_returns_none(media_root):
     assert thumb is None
 
 
-from src.media.thumbnailer import compose_pictureset_thumbnail
+from media.thumbnailer import compose_pictureset_thumbnail
 
 
 def test_pictureset_thumbnail_composed(media_root):

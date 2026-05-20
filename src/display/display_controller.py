@@ -9,7 +9,7 @@ from .pdf_player import PdfPlayer
 from .slideshow import Slideshow
 from .menu import CategoryMenu, SubMenu
 from .topic_slideshow import TopicSlideshow
-from src.input.category_store import NodeKind
+from input.category_store import NodeKind
 
 logger = logging.getLogger(__name__)
 

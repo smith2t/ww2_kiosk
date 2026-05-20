@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import pytest
 
-from src.input.category_store import CategoryStore, Node, NodeKind
+from input.category_store import CategoryStore, Node, NodeKind
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def app_with_store(tmp_path):
     }
     store.save()
 
-    from src.network.web_interface import WebInterface
+    from network.web_interface import WebInterface
     web = WebInterface(settings, store=store, controller=None)
     app = web.app
     app.config["TESTING"] = True

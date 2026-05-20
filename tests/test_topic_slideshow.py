@@ -7,7 +7,7 @@ import pytest
 import pygame
 from PIL import Image
 
-from src.input.category_store import Node, NodeKind
+from input.category_store import Node, NodeKind
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -18,7 +18,7 @@ def _pygame_init():
     pygame.quit()
 
 
-from src.display.topic_slideshow import TopicSlideshow
+from display.topic_slideshow import TopicSlideshow
 
 
 def _settings(tmp_path):

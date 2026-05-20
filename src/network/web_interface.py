@@ -11,7 +11,7 @@ from typing import Optional
 from flask import Flask, render_template, render_template_string, request, redirect, url_for, flash, jsonify
 from werkzeug.utils import secure_filename
 
-from src.media.thumbnailer import ensure_thumbnail
+from media.thumbnailer import ensure_thumbnail
 
 logger = logging.getLogger(__name__)
 
@@ -308,8 +308,8 @@ class WebInterface:
         @self.app.route("/settings/catalog/<path:catalog_path>")
         def settings_catalog_view(catalog_path):
             from flask import render_template, abort
-            from src.input.category_store import parse_path, format_path
-            from src.media.thumbnailer import ensure_thumbnail
+            from input.category_store import parse_path, format_path
+            from media.thumbnailer import ensure_thumbnail
             try:
                 path = parse_path(catalog_path)
             except ValueError:
@@ -354,7 +354,7 @@ class WebInterface:
         @self.app.route("/settings/catalog/<path:catalog_path>/save", methods=["POST"])
         def settings_catalog_save(catalog_path):
             from flask import request, redirect, abort
-            from src.input.category_store import parse_path, Node, NodeKind, format_path
+            from input.category_store import parse_path, Node, NodeKind, format_path
             try:
                 path = parse_path(catalog_path)
             except ValueError:
@@ -392,7 +392,7 @@ class WebInterface:
         @self.app.route("/settings/catalog/<path:catalog_path>/add-child", methods=["POST"])
         def settings_catalog_add_child(catalog_path):
             from flask import request, redirect, abort
-            from src.input.category_store import parse_path, Node, NodeKind, format_path
+            from input.category_store import parse_path, Node, NodeKind, format_path
             try:
                 path = parse_path(catalog_path)
             except ValueError:
@@ -426,7 +426,7 @@ class WebInterface:
         @self.app.route("/settings/catalog/<path:catalog_path>/reorder", methods=["POST"])
         def settings_catalog_reorder(catalog_path):
             from flask import request, abort
-            from src.input.category_store import parse_path
+            from input.category_store import parse_path
             try:
                 path = parse_path(catalog_path)
             except ValueError:
@@ -444,7 +444,7 @@ class WebInterface:
         @self.app.route("/settings/catalog/<path:catalog_path>/delete", methods=["POST"])
         def settings_catalog_delete(catalog_path):
             from flask import redirect, abort
-            from src.input.category_store import parse_path, format_path
+            from input.category_store import parse_path, format_path
             try:
                 path = parse_path(catalog_path)
             except ValueError:
@@ -461,7 +461,7 @@ class WebInterface:
         @self.app.route("/thumb/<path:basename>")
         def serve_thumb(basename):
             from flask import send_file, abort
-            from src.media.thumbnailer import ensure_thumbnail
+            from media.thumbnailer import ensure_thumbnail
             full = self._resolve_media_path(basename)
             if full is None:
                 abort(404)
@@ -474,8 +474,8 @@ class WebInterface:
         def serve_pictureset_thumb(catalog_path):
             from flask import send_file, abort
             from pathlib import Path
-            from src.input.category_store import parse_path, NodeKind
-            from src.media.thumbnailer import compose_pictureset_thumbnail, _cache_dir
+            from input.category_store import parse_path, NodeKind
+            from media.thumbnailer import compose_pictureset_thumbnail, _cache_dir
             import hashlib
             try:
                 path = parse_path(catalog_path)

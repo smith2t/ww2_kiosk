@@ -7,8 +7,8 @@ import pygame
 from types import SimpleNamespace
 import asyncio
 from unittest.mock import Mock, patch, MagicMock
-from src.display.menu import _MenuBase, BADGE_GLYPHS, CategoryMenu
-from src.input.category_store import Node, NodeKind
+from display.menu import _MenuBase, BADGE_GLYPHS, CategoryMenu
+from input.category_store import Node, NodeKind
 
 
 def test_badge_glyph_map_complete():
@@ -68,7 +68,7 @@ def test_category_menu_draw_skips_null_tiles():
     assert menu.lit_slots() == [1]
 
 
-from src.display.menu import SubMenu
+from display.menu import SubMenu
 
 
 def _store_with(*children, parent_title="EU"):

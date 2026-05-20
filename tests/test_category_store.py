@@ -1,5 +1,5 @@
 import pytest
-from src.input.category_store import (
+from input.category_store import (
     Node, NodeKind, SCHEMA_VERSION,
     node_to_dict, node_from_dict,
     parse_path, format_path,
@@ -129,7 +129,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from src.input.category_store import CategoryStore
+from input.category_store import CategoryStore
 
 
 def _settings(tmp_path: Path) -> SimpleNamespace:
