@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, render_template_string, request, redirect, url_for, flash, jsonify
 from werkzeug.utils import secure_filename
 
 from src.media.thumbnailer import ensure_thumbnail
@@ -17,9 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class WebInterface:
-    def __init__(self, settings):
+    def __init__(self, settings, store=None, controller=None):
         self.settings = settings
-        self.app = Flask(__name__)
+        self.store = store
+        self.controller = controller
+        self.app = Flask(__name__, template_folder="templates")
         self.app.secret_key = 'ww2-kiosk-secret-key'  # TODO: Make this configurable
         # Allow up to 5 GB per request (large video bundles); werkzeug's default
         # silently rejects over-size multipart bodies with HTTP 400.
@@ -293,6 +295,15 @@ class WebInterface:
                 flash(f'Error deleting file: {e}')
 
             return redirect(url_for('media'))
+
+        @self.app.route('/settings/catalog')
+        def settings_catalog_root():
+            slots = []
+            colors = {"1": "blue", "2": "green", "3": "yellow", "4": "red"}
+            for slot_id in ("1", "2", "3", "4"):
+                slots.append((slot_id, self.store.get_root_slot(slot_id),
+                              colors[slot_id]))
+            return render_template("catalog_root.html", slots=slots)
 
         @self.app.route('/api/status')
         def api_status():

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Catalog — WW2 Kiosk</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; margin: 2em; }
+    h1 { margin: 0 0 1em 0; }
+    .slot { border: 2px solid #ccc; border-radius: 12px; padding: 1em; margin: 1em 0;
+            display: flex; gap: 1em; align-items: center; }
+    .slot.empty { border-style: dashed; color: #999; }
+    .swatch { width: 32px; height: 32px; border-radius: 6px; flex-shrink: 0; }
+    .blue { background: #2563eb; } .green { background: #16a34a; }
+    .yellow { background: #ca8a04; } .red { background: #dc2626; }
+    .meta { flex: 1; }
+    a.btn { display: inline-block; padding: .5em .8em; background: #333; color: #fff;
+            border-radius: 6px; text-decoration: none; margin-right: .5em; }
+    form { display: inline; }
+    .clear { background: #b00; color: #fff; border: 0; padding: .5em .8em;
+             border-radius: 6px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Catalog</h1>
+  <p><a href="/settings">&larr; back to settings</a></p>
+
+  {% for slot_id, slot, color in slots %}
+  <div class="slot {% if slot is none %}empty{% endif %}">
+    <div class="swatch {{ color }}"></div>
+    <div class="meta">
+      <strong>Slot {{ slot_id }} ({{ color }})</strong>
+      {% if slot is none %}
+        <em>— empty (tile hidden from visitors)</em>
+      {% else %}
+        <div>{{ slot.title or '(untitled)' }} <small>[{{ slot.kind.value }}]</small></div>
+      {% endif %}
+    </div>
+    <div>
+      <a class="btn" href="/settings/catalog/{{ slot_id }}">Edit</a>
+      {% if slot is not none %}
+      <form method="post" action="/settings/catalog/{{ slot_id }}/delete"
+            onsubmit="return confirm('Clear slot {{ slot_id }}? Items below it will be removed.');">
+        <button class="clear" type="submit">Clear this slot</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</body>
+</html>
