@@ -55,3 +55,20 @@ def test_cache_invalidated_when_source_newer(media_root):
 
     new_thumb = ensure_thumbnail(src)
     assert new_thumb.stat().st_mtime > old_mtime
+
+
+def test_pdf_thumbnail_generated(media_root):
+    import fitz
+    src = media_root / "pictures" / "doc.pdf"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 144), "Hello world", fontsize=24)
+    doc.save(src)
+    doc.close()
+
+    thumb = ensure_thumbnail(src)
+    assert thumb is not None
+    assert thumb.exists()
+    with Image.open(thumb) as t:
+        assert t.size == THUMB_SIZE

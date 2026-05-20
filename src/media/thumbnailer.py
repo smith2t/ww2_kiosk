@@ -45,6 +45,26 @@ def _thumbnail_image(src: Path, dst: Path) -> None:
         canvas.save(dst, format="PNG")
 
 
+def _thumbnail_pdf(src: Path, dst: Path) -> None:
+    import fitz   # PyMuPDF, existing project dep
+    doc = fitz.open(src)
+    try:
+        if doc.page_count == 0:
+            raise ValueError("PDF has no pages")
+        page = doc.load_page(0)
+        zoom = max(1.0, THUMB_SIZE[0] / page.rect.width)
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        img.thumbnail(THUMB_SIZE, Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", THUMB_SIZE, (0, 0, 0))
+        x = (THUMB_SIZE[0] - img.size[0]) // 2
+        y = (THUMB_SIZE[1] - img.size[1]) // 2
+        canvas.paste(img, (x, y))
+        canvas.save(dst, format="PNG")
+    finally:
+        doc.close()
+
+
 def ensure_thumbnail(media_path: Path) -> Optional[Path]:
     """Return cached thumbnail PNG, generating it if missing or stale.
 
@@ -58,11 +78,13 @@ def ensure_thumbnail(media_path: Path) -> Optional[Path]:
     if dst.exists() and dst.stat().st_mtime >= media_path.stat().st_mtime:
         return dst
     try:
+        ext = media_path.suffix.lower()
         if _is_image(media_path):
             _thumbnail_image(media_path, dst)
+        elif ext == ".pdf":
+            _thumbnail_pdf(media_path, dst)
         else:
-            logger.info(f"no thumbnailer for {media_path.suffix} "
-                        "(video/PDF support arrives in later tasks)")
+            logger.info(f"no thumbnailer yet for {ext}")
             return None
         return dst
     except Exception as e:
