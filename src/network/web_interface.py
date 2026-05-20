@@ -423,6 +423,24 @@ class WebInterface:
             return redirect(f"/settings/catalog/{format_path(path)}")
 
 
+        @self.app.route("/settings/catalog/<path:catalog_path>/reorder", methods=["POST"])
+        def settings_catalog_reorder(catalog_path):
+            from flask import request, abort
+            from src.input.category_store import parse_path
+            try:
+                path = parse_path(catalog_path)
+            except ValueError:
+                abort(400)
+            order = (request.get_json(silent=True) or {}).get("order")
+            if not isinstance(order, list):
+                return "order must be a list", 400
+            try:
+                self.store.reorder_children(path, [int(i) for i in order])
+            except ValueError as e:
+                return f"Reorder rejected: {e}", 400
+            return "", 204
+
+
         @self.app.route("/settings/catalog/<path:catalog_path>/delete", methods=["POST"])
         def settings_catalog_delete(catalog_path):
             from flask import redirect, abort

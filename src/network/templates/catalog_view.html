@@ -98,5 +98,40 @@
       {% endif %}
     </div>
   {% endif %}
+{% if node.kind.value == 'category' and node.children %}
+<script>
+(function() {
+  const path = "{{ path_str }}";
+  const list = Array.from(document.querySelectorAll('.child'));
+  list.forEach((el, i) => {
+    el.draggable = true;
+    el.dataset.originalIndex = i;
+    el.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', i.toString());
+      el.style.opacity = '0.5';
+    });
+    el.addEventListener('dragend', () => { el.style.opacity = '1'; });
+    el.addEventListener('dragover', (e) => e.preventDefault());
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+      const to = parseInt(el.dataset.originalIndex, 10);
+      if (from === to) return;
+      const order = list.map((_, j) => j);
+      const moved = order.splice(from, 1)[0];
+      order.splice(to, 0, moved);
+      fetch(`/settings/catalog/${path}/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order })
+      }).then(r => {
+        if (r.ok) location.reload();
+        else r.text().then(t => alert('Reorder failed: ' + t));
+      });
+    });
+  });
+})();
+</script>
+{% endif %}
 </body>
 </html>

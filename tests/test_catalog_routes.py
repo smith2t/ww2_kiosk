@@ -120,3 +120,20 @@ def test_delete_root_slot_clears(app_with_store):
     with app.test_client() as c:
         c.post("/settings/catalog/3/delete")
     assert store.get_root_slot(3) is None
+
+
+def test_reorder_endpoint(app_with_store):
+    app, store = app_with_store
+    store.add_child([1], Node(kind=NodeKind.PDF, title="Maps", file="maps.pdf"))
+    with app.test_client() as c:
+        r = c.post("/settings/catalog/1/reorder", json={"order": [1, 0]})
+        assert r.status_code in (200, 302, 204)
+    eu = store.get_root_slot(1)
+    assert [c.title for c in eu.children] == ["Maps", "D-Day"]
+
+
+def test_reorder_rejects_bad_permutation(app_with_store):
+    app, _ = app_with_store
+    with app.test_client() as c:
+        r = c.post("/settings/catalog/1/reorder", json={"order": [0, 0]})
+        assert r.status_code == 400
