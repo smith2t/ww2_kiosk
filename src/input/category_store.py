@@ -134,37 +134,6 @@ def format_path(path: List[int]) -> str:
     return "/".join(str(p) for p in path)
 
 
-DEFAULT_CATEGORY_TITLES = {
-    "1": "Category 1 — Blue",
-    "2": "Category 2 — Green",
-    "3": "Category 3 — Yellow",
-    "4": "Category 4 — Red",
-}
-
-
-@dataclass
-class Item:
-    file: str
-    title: str = ""
-
-    def to_dict(self) -> dict:
-        return {"file": self.file, "title": self.title}
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "Item":
-        return cls(file=str(d.get("file", "")), title=str(d.get("title", "")))
-
-
-@dataclass
-class Category:
-    cat_id: str
-    title: str
-    items: List[Item] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return {"title": self.title, "items": [i.to_dict() for i in self.items]}
-
-
 class CategoryStore:
     """v2 catalog store. Holds the tree in `_tree` (dict slot→Node|None)."""
 
