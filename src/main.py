@@ -107,7 +107,11 @@ class WW2Kiosk:
 
             # Initialize web interface
             if self.settings.network.enable_web:
-                self.web_interface = WebInterface(self.settings)
+                self.web_interface = WebInterface(
+                    self.settings,
+                    store=self.store,
+                    controller=self.display_controller,
+                )
                 # Start web interface in background
                 asyncio.create_task(self.web_interface.start(
                     host=self.settings.network.web_host,
