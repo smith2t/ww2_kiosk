@@ -85,3 +85,38 @@ def test_catalog_drilldown_invalid_path_returns_404(app_with_store):
     with app.test_client() as c:
         r = c.get("/settings/catalog/1/99")
         assert r.status_code == 404
+
+
+def test_save_updates_leaf(app_with_store):
+    app, store = app_with_store
+    with app.test_client() as c:
+        r = c.post("/settings/catalog/3/save",
+                   data={"title": "Midway 1942", "file": "midway.mp4"})
+        assert r.status_code in (200, 302)
+    assert store.get_root_slot(3).title == "Midway 1942"
+
+
+def test_add_video_child(app_with_store):
+    app, store = app_with_store
+    with app.test_client() as c:
+        r = c.post("/settings/catalog/1/add-child",
+                   data={"kind": "video", "title": "Stalingrad",
+                         "file": "stalingrad.mp4"})
+        assert r.status_code in (200, 302)
+    eu = store.get_root_slot(1)
+    assert eu.children[-1].file == "stalingrad.mp4"
+
+
+def test_delete_child(app_with_store):
+    app, store = app_with_store
+    with app.test_client() as c:
+        r = c.post("/settings/catalog/1/0/delete")
+        assert r.status_code in (200, 302)
+    assert len(store.get_root_slot(1).children) == 0
+
+
+def test_delete_root_slot_clears(app_with_store):
+    app, store = app_with_store
+    with app.test_client() as c:
+        c.post("/settings/catalog/3/delete")
+    assert store.get_root_slot(3) is None

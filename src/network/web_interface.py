@@ -351,6 +351,95 @@ class WebInterface:
                 zip=zip,
             )
 
+        @self.app.route("/settings/catalog/<path:catalog_path>/save", methods=["POST"])
+        def settings_catalog_save(catalog_path):
+            from flask import request, redirect, abort
+            from src.input.category_store import parse_path, Node, NodeKind, format_path
+            try:
+                path = parse_path(catalog_path)
+            except ValueError:
+                abort(400)
+            node = self.store.resolve(path)
+            if node is None:
+                abort(404)
+
+            new_title = request.form.get("title", node.title)
+            if node.kind in (NodeKind.VIDEO, NodeKind.PDF):
+                new = Node(kind=node.kind, title=new_title,
+                           file=request.form.get("file", node.file))
+            elif node.kind is NodeKind.PICTURESET:
+                files = [l.strip() for l in
+                         request.form.get("files", "").splitlines() if l.strip()]
+                captions = request.form.get("captions", "").splitlines()
+                while len(captions) < len(files):
+                    captions.append("")
+                captions = captions[:len(files)]
+                interval = int(request.form.get("interval_sec", node.interval_sec))
+                new = Node(kind=node.kind, title=new_title, files=files,
+                           captions=captions, interval_sec=interval)
+            elif node.kind is NodeKind.CATEGORY:
+                new = Node(kind=node.kind, title=new_title, children=node.children)
+            else:
+                abort(400)
+
+            try:
+                self.store.replace_node(path, new)
+            except ValueError as e:
+                return f"Save rejected: {e}", 400
+            return redirect(f"/settings/catalog/{format_path(path)}")
+
+
+        @self.app.route("/settings/catalog/<path:catalog_path>/add-child", methods=["POST"])
+        def settings_catalog_add_child(catalog_path):
+            from flask import request, redirect, abort
+            from src.input.category_store import parse_path, Node, NodeKind, format_path
+            try:
+                path = parse_path(catalog_path)
+            except ValueError:
+                abort(400)
+            kind = request.form.get("kind")
+            title = request.form.get("title", "")
+            file = request.form.get("file", "")
+            try:
+                k = NodeKind(kind)
+            except ValueError:
+                return f"unknown kind: {kind}", 400
+            if k is NodeKind.CATEGORY:
+                new = Node(kind=k, title=title, children=[])
+            elif k in (NodeKind.VIDEO, NodeKind.PDF):
+                new = Node(kind=k, title=title, file=file)
+            elif k is NodeKind.PICTURESET:
+                if not file:
+                    return ("Picture-sets must be created via the dedicated form "
+                            "(no files set yet)."), 400
+                new = Node(kind=k, title=title, files=[file],
+                           captions=[""], interval_sec=6)
+            else:
+                return f"unknown kind: {kind}", 400
+            try:
+                self.store.add_child(path, new)
+            except ValueError as e:
+                return f"Add rejected: {e}", 400
+            return redirect(f"/settings/catalog/{format_path(path)}")
+
+
+        @self.app.route("/settings/catalog/<path:catalog_path>/delete", methods=["POST"])
+        def settings_catalog_delete(catalog_path):
+            from flask import redirect, abort
+            from src.input.category_store import parse_path, format_path
+            try:
+                path = parse_path(catalog_path)
+            except ValueError:
+                abort(400)
+            try:
+                self.store.delete_node(path)
+            except ValueError as e:
+                return f"Delete rejected: {e}", 400
+            parent_path = path[:-1]
+            return redirect("/settings/catalog" if not parent_path
+                            else f"/settings/catalog/{format_path(parent_path)}")
+
+
         @self.app.route("/thumb/<path:basename>")
         def serve_thumb(basename):
             from flask import send_file, abort
