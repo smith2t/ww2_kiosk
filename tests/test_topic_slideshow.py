@@ -59,3 +59,30 @@ def test_open_missing_file_falls_through(tmp_path):
     ts.open(leaf)
     ts.draw()
     assert ts.current_index == 0
+
+
+def test_caption_drawn_when_present(tmp_path):
+    _make_images(tmp_path, ["a.jpg"])
+    leaf = Node(kind=NodeKind.PICTURESET, title="Set",
+                files=["a.jpg"], captions=["Hello caption"], interval_sec=3)
+    ts = TopicSlideshow(_settings(tmp_path))
+    asyncio.run(ts.initialize(screen=pygame.display.get_surface()))
+    ts.open(leaf)
+    ts.draw()
+    surf = pygame.display.get_surface()
+    sw, sh = surf.get_size()
+    # Sample inside the caption bar band (centered at ~92% down)
+    px = surf.get_at((sw // 2, int(sh * 0.92)))
+    # The bar is near-black w/ alpha, text is white — pixel must hit one or the other
+    assert (px[0] < 80 and px[1] < 80 and px[2] < 80) or (px[0] > 200)
+
+
+def test_no_caption_drawn_when_empty(tmp_path):
+    _make_images(tmp_path, ["a.jpg"])
+    leaf = Node(kind=NodeKind.PICTURESET, title="Set",
+                files=["a.jpg"], captions=[""], interval_sec=3)
+    ts = TopicSlideshow(_settings(tmp_path))
+    asyncio.run(ts.initialize(screen=pygame.display.get_surface()))
+    ts.open(leaf)
+    ts.draw()
+    assert ts.current_index == 0   # no crash

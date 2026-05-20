@@ -90,4 +90,18 @@ class TopicSlideshow:
                                              (180, 180, 180))
             self.screen.blit(hint, hint.get_rect(midbottom=(sw // 2, sh - 10)))
 
+        # Caption overlay (only when this slide has non-empty caption text)
+        if (self._caption_font
+                and self.leaf.captions
+                and self.current_index < len(self.leaf.captions)
+                and self.leaf.captions[self.current_index].strip()):
+            cap = self.leaf.captions[self.current_index]
+            bar_h = int(sh * 0.12)
+            bar = pygame.Surface((sw, bar_h), pygame.SRCALPHA)
+            bar.fill((0, 0, 0, 180))
+            self.screen.blit(bar, (0, sh - bar_h - 40))
+            txt = self._caption_font.render(cap, True, (255, 255, 255))
+            self.screen.blit(txt, txt.get_rect(center=(sw // 2,
+                                                       sh - bar_h // 2 - 40)))
+
         pygame.display.flip()
