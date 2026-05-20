@@ -2,6 +2,7 @@ import pytest
 from src.input.category_store import (
     Node, NodeKind, SCHEMA_VERSION,
     node_to_dict, node_from_dict,
+    parse_path, format_path,
 )
 
 
@@ -83,3 +84,42 @@ def test_pictureset_requires_at_least_one_file():
             "kind": "pictureset", "title": "X",
             "files": [], "captions": [], "interval_sec": 6,
         })
+
+
+def test_parse_path_root_slot():
+    assert parse_path("1") == [1]
+    assert parse_path("/1") == [1]
+    assert parse_path("/4/") == [4]
+
+
+def test_parse_path_deeper():
+    assert parse_path("1/0") == [1, 0]
+    assert parse_path("/2/3/1") == [2, 3, 1]
+
+
+def test_parse_path_empty_is_root():
+    assert parse_path("") == []
+    assert parse_path("/") == []
+
+
+def test_parse_path_rejects_non_integer():
+    with pytest.raises(ValueError):
+        parse_path("1/foo")
+
+
+def test_parse_path_rejects_negative():
+    with pytest.raises(ValueError):
+        parse_path("1/-1")
+
+
+def test_parse_path_rejects_invalid_root_slot():
+    with pytest.raises(ValueError, match="root slot must be 1-4"):
+        parse_path("5")
+    with pytest.raises(ValueError, match="root slot must be 1-4"):
+        parse_path("0/0")
+
+
+def test_format_path_roundtrip():
+    for s in ("1", "1/0", "3/2/1"):
+        assert format_path(parse_path(s)) == s
+    assert format_path([]) == ""

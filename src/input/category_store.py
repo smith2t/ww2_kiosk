@@ -104,6 +104,35 @@ def node_from_dict(d: dict) -> Node:
     return Node(kind=kind, title=title, files=files, captions=captions,
                 interval_sec=interval)
 
+def parse_path(s: str) -> List[int]:
+    """Parse a slash-separated path into a list of ints.
+
+    Returns [] for the root (the tree as a whole).
+    First component must be a root slot in 1..4 if present.
+    Deeper components are 0-based child indices.
+    """
+    parts = [p for p in s.strip("/").split("/") if p]
+    if not parts:
+        return []
+    out = []
+    for i, p in enumerate(parts):
+        try:
+            n = int(p)
+        except ValueError as e:
+            raise ValueError(f"path component {p!r} is not an integer") from e
+        if n < 0:
+            raise ValueError(f"path component {n} is negative")
+        if i == 0 and not (1 <= n <= 4):
+            raise ValueError(f"root slot must be 1-4, got {n}")
+        out.append(n)
+    return out
+
+
+def format_path(path: List[int]) -> str:
+    """Format a path (list of ints) as a slash-separated string."""
+    return "/".join(str(p) for p in path)
+
+
 DEFAULT_CATEGORY_TITLES = {
     "1": "Category 1 — Blue",
     "2": "Category 2 — Green",
