@@ -66,3 +66,97 @@ def test_category_menu_draw_skips_null_tiles():
     # The draw() method should only iterate over non-None nodes
     # This is tested by ensuring lit_slots() == [1]
     assert menu.lit_slots() == [1]
+
+
+from src.display.menu import SubMenu
+
+
+def _store_with(*children, parent_title="EU"):
+    return _FakeStore({
+        "1": Node(kind=NodeKind.CATEGORY, title=parent_title, children=list(children)),
+        "2": None, "3": None, "4": None,
+    })
+
+
+def _resolve(store, path):
+    if not path:
+        return None
+    node = store.root_slots().get(str(path[0]))
+    for idx in path[1:]:
+        if node is None or node.kind is not NodeKind.CATEGORY:
+            return None
+        if idx < 0 or idx >= len(node.children):
+            return None
+        node = node.children[idx]
+    return node
+
+
+def _menu_at(store, path):
+    store.resolve = lambda p: _resolve(store, p)
+    m = SubMenu(_settings(), store)
+    # Mock the fonts to avoid pygame font initialization issues in tests
+    m.fonts = {
+        'title':  MagicMock(),
+        'color':  MagicMock(),
+        'hint':   MagicMock(),
+    }
+    m._desc_fonts = {sz: MagicMock() for sz in (96, 80, 72, 64, 56, 48, 40, 36, 32)}
+    m._badge_font = MagicMock()
+    m.screen = pygame.display.get_surface()
+    m.open(path)
+    return m
+
+
+def test_submenu_button4_is_back_with_three_children():
+    store = _store_with(
+        Node(kind=NodeKind.VIDEO, title="A", file="a.mp4"),
+        Node(kind=NodeKind.VIDEO, title="B", file="b.mp4"),
+        Node(kind=NodeKind.VIDEO, title="C", file="c.mp4"),
+    )
+    m = _menu_at(store, [1])
+    items, paginated = m.visible_items()
+    assert paginated is False
+    assert len(items) == 3
+    assert m.selection_for_button(4) == ("back",)
+
+
+def test_submenu_button4_is_back_with_four_children():
+    children = [Node(kind=NodeKind.VIDEO, title=f"V{i}", file=f"v{i}.mp4") for i in range(4)]
+    store = _store_with(*children)
+    m = _menu_at(store, [1])
+    items, paginated = m.visible_items()
+    assert paginated is False
+    assert len(items) == 3
+    assert m.selection_for_button(4) == ("back",)
+
+
+def test_submenu_pagination_at_five_children():
+    children = [Node(kind=NodeKind.VIDEO, title=f"V{i}", file=f"v{i}.mp4") for i in range(5)]
+    store = _store_with(*children)
+    m = _menu_at(store, [1])
+    assert m.selection_for_button(4) == ("next",)
+    m.next_page()
+    assert m.selection_for_button(4) == ("back",)
+
+
+def test_submenu_drill_into_subcategory():
+    store = _store_with(
+        Node(kind=NodeKind.CATEGORY, title="Air", children=[
+            Node(kind=NodeKind.VIDEO, title="BoB", file="bob.mp4"),
+        ]),
+    )
+    m = _menu_at(store, [1])
+    action = m.selection_for_button(1)
+    assert action[0] == "drill"
+    assert action[1] == [1, 0]
+
+
+def test_submenu_play_leaf():
+    store = _store_with(
+        Node(kind=NodeKind.VIDEO, title="X", file="x.mp4"),
+    )
+    m = _menu_at(store, [1])
+    action = m.selection_for_button(1)
+    assert action[0] == "play"
+    assert action[1].file == "x.mp4"
+    assert action[2] == [1, 0]

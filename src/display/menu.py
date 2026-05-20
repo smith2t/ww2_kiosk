@@ -1,8 +1,8 @@
 """Two-level menu system:
 
   CategoryMenu  — 4 colored tiles, each a category title (always 4 tiles)
-  ItemMenu      — items in the chosen category, paginated 3-at-a-time when
-                  more than 4 fit (tile 4 becomes "Next →")
+  SubMenu       — items in a category node anywhere in the tree, paginated
+                  3-at-a-time when more than 4 fit (tile 4 becomes "Next →")
 
 Both menus are drawn directly to the active pygame surface so they stack
 cleanly under the slideshow's pygame window.
@@ -12,6 +12,8 @@ import logging
 from typing import List, Optional
 
 import pygame
+
+from src.input.category_store import NodeKind
 
 logger = logging.getLogger(__name__)
 
@@ -180,31 +182,40 @@ class CategoryMenu(_MenuBase):
         pygame.display.flip()
 
 
-class ItemMenu(_MenuBase):
-    """Items within a single category, paginated 3+Next when >4 items."""
+class SubMenu(_MenuBase):
+    """Menu showing children of a category node anywhere in the tree.
+
+    Set the current location via open(path). Pagination kicks in only when a
+    category has 5+ children — with ≤4 children tile 4 is reserved as Back,
+    and tiles 1-3 show items. With exactly 4 children, the 4th is unreachable
+    from this menu — the curator UI surfaces this configuration as a warning.
+    """
 
     def __init__(self, settings, store):
         super().__init__(settings)
         self.store = store
-        self.cat_id: Optional[str] = None
-        self.page = 0   # zero-based
-        self.page_size = 3   # when paginated (3 items + Next tile)
+        self.path: List[int] = []
+        self.page = 0
+        self.page_size = 3
 
-    def open(self, cat_id):
-        """Switch this menu to show the given category, page 0."""
-        self.cat_id = str(cat_id)
+    def open(self, path):
+        self.path = list(path)
         self.page = 0
 
-    # ---- pagination helpers ------------------------------------------
-    def _items(self):
-        cat = self.store.get_category(self.cat_id) if self.cat_id else None
-        return list(cat.items) if cat else []
+    def _parent_node(self):
+        return self.store.resolve(self.path) if self.path else None
+
+    def _children(self):
+        n = self._parent_node()
+        if n is None or n.kind is not NodeKind.CATEGORY:
+            return []
+        return list(n.children)
 
     def _is_paginated(self):
-        return len(self._items()) > 4
+        return len(self._children()) > 4
 
     def _page_count(self):
-        n = len(self._items())
+        n = len(self._children())
         if n <= 4:
             return 1
         return max(1, (n + self.page_size - 1) // self.page_size)
@@ -213,42 +224,41 @@ class ItemMenu(_MenuBase):
         return self._is_paginated() and self.page >= self._page_count() - 1
 
     def next_page(self):
-        if not self._is_paginated():
-            return
-        # Advance only — never wraps. The last page surfaces a Back tile.
-        if self.page < self._page_count() - 1:
+        if self._is_paginated() and self.page < self._page_count() - 1:
             self.page += 1
 
-    # ---- view model --------------------------------------------------
     def visible_items(self):
-        """Returns (items_for_page, paginated_flag).
-
-        items_for_page may have up to 3 entries when paginated (tile 4 is
-        nav) or up to 4 entries when not paginated.
+        """Return (children_for_this_page, paginated_flag).
+        At most 3 children when paginated (tile 4 is Next/Back).
+        When not paginated, returns 0-3 children (tile 4 is always Back).
         """
-        items = self._items()
-        if len(items) <= 4:
-            return items[:4], False
+        children = self._children()
+        if len(children) <= 4:
+            return children[:3], False
         start = self.page * self.page_size
-        return items[start:start + self.page_size], True
+        return children[start:start + self.page_size], True
 
     def selection_for_button(self, button_id):
-        """Returns:
-            ('play', item, index)  — play that item
-            ('next',)              — advance to the next page
-            ('back_to_topics',)    — return to the category menu
-            ('noop',)              — empty slot, ignore
+        """Returns one of:
+          ('play', node, abs_path)
+          ('drill', abs_path)
+          ('next',)
+          ('back',)
+          ('noop',)
         """
         items, paginated = self.visible_items()
+        if button_id == 4:
+            if paginated and not self._is_last_page():
+                return ('next',)
+            return ('back',)
         idx = button_id - 1
-        if paginated and button_id == 4:
-            return ('back_to_topics',) if self._is_last_page() else ('next',)
         if 0 <= idx < len(items):
-            return ('play', items[idx], self.page * self.page_size + idx)
-        # Empty slot in a non-paginated category. Repurpose tile 4 as "Back"
-        # so visitors always have an escape hatch without waiting 30 sec.
-        if not paginated and button_id == 4:
-            return ('back_to_topics',)
+            node = items[idx]
+            absolute_idx = (self.page * self.page_size if paginated else 0) + idx
+            abs_path = self.path + [absolute_idx]
+            if node.kind is NodeKind.CATEGORY:
+                return ('drill', abs_path)
+            return ('play', node, abs_path)
         return ('noop',)
 
     def draw(self):
@@ -257,14 +267,14 @@ class ItemMenu(_MenuBase):
         if self.screen is None:
             return
 
-        cat = self.store.get_category(self.cat_id) if self.cat_id else None
-        title = cat.title if cat else "(empty)"
+        parent = self._parent_node()
+        title = parent.title if parent else "(empty)"
         items, paginated = self.visible_items()
-        n_total = len(cat.items) if cat else 0
+        n_total = len(self._children())
 
         page_info = ""
         if paginated:
-            pages = max(1, (n_total + self.page_size - 1) // self.page_size)
+            pages = self._page_count()
             page_info = f"  ({self.page + 1} / {pages})"
 
         sw, sh = self._draw_chrome(title + page_info,
@@ -277,22 +287,23 @@ class ItemMenu(_MenuBase):
             label = COLORS[button_id][0]
             color = COLORS[button_id][1]
 
-            if paginated and button_id == 4:
-                if self._is_last_page():
-                    self._draw_tile(x, y, w, h, _BTN4_COLOR, label, "←  Back to topics")
+            if button_id == 4:
+                if paginated and not self._is_last_page():
+                    self._draw_tile(x, y, w, h, _BTN4_COLOR, label, "Next  →",
+                                    kind="nav_next")
                 else:
-                    self._draw_tile(x, y, w, h, _BTN4_COLOR, label, "Next  →")
+                    self._draw_tile(x, y, w, h, _BTN4_COLOR, label, "←  Back",
+                                    kind="nav_back")
                 continue
 
             if slot < len(items):
+                node = items[slot]
                 self._draw_tile(x, y, w, h, color, label,
-                                items[slot].title or items[slot].file)
-            elif not paginated and button_id == 4:
-                # Empty slot 4 with no pagination -> repurpose as Back.
-                self._draw_tile(x, y, w, h, _BTN4_COLOR, label, "←  Back to topics")
-            else:
-                # Empty middle slot — keep the colored frame so visitors see
-                # the layout but it's clearly empty.
-                self._draw_tile(x, y, w, h, color, label, "—")
+                                node.title or getattr(node, "file", ""),
+                                kind=node.kind.value)
+            # else: hidden tile — don't draw anything
 
         pygame.display.flip()
+
+
+ItemMenu = SubMenu   # backwards-compat — removed in Task 17
