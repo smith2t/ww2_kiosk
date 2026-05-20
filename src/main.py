@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config.settings import Settings
 from display.display_controller import DisplayController, DisplayMode
 from display.led_controller import LEDController
-from input.category_store import CategoryStore
+from input.category_store import CategoryStore, NodeKind
 from input.gpio_controller import GPIOController
 from media.content_loader import ContentLoader
 from network.ap_manager import AccessPointManager
@@ -126,11 +126,11 @@ class WW2Kiosk:
             raise
     
     async def handle_button_press(self, button_id):
-        """Three-state machine:
-            slideshow      + any-button -> show CATEGORY_MENU
-            CATEGORY_MENU  + button N   -> show ITEM_MENU for category N
-            ITEM_MENU      + slot 1..3  -> play that item
-            ITEM_MENU      + button 4 (paginated) -> next page
+        """State machine:
+            SLIDESHOW/IDLE + any-button -> show CATEGORY_MENU
+            CATEGORY_MENU  + button N   -> drill into SUBMENU or play leaf
+            SUBMENU        + button     -> play/drill/next-page/back
+            PICTURESET     + button 4   -> stop and return to menu
             VIDEO          + any-button -> stop playback
         """
         current_time = time.time()
@@ -166,37 +166,65 @@ class WW2Kiosk:
             await dc.show_category_menu()
             return
 
+        # --- ROOT (CategoryMenu) ----------------------------------------
         if mode == DisplayMode.CATEGORY_MENU:
-            await dc.show_item_menu(button_id)
+            root_node = self.store.get_root_slot(button_id)
+            if root_node is None:
+                return  # hidden tile — ignore
+            if root_node.kind is NodeKind.CATEGORY:
+                await dc.show_submenu([button_id])
+            elif root_node.kind is NodeKind.VIDEO:
+                dc._menu_stack = [button_id]
+                video_path = Path(self.settings.media.videos_dir) / root_node.file
+                await self._show_countdown(button_id)
+                await dc.play_video(str(video_path))
+            elif root_node.kind is NodeKind.PDF:
+                dc._menu_stack = [button_id]
+                pdf_path = Path(self.settings.media.pictures_dir) / root_node.file
+                await dc.play_pdf(str(pdf_path))
+            elif root_node.kind is NodeKind.PICTURESET:
+                dc._menu_stack = [button_id]
+                await dc.play_pictureset(root_node)
             return
 
-        if mode == DisplayMode.ITEM_MENU:
-            choice = dc.item_menu.selection_for_button(button_id)
-            if choice[0] == 'next':
-                dc.item_menu.next_page()
+        # --- SUBMENU --------------------------------------------------
+        if mode == DisplayMode.SUBMENU:
+            action = dc.sub_menu.selection_for_button(button_id)
+            op = action[0]
+            if op == "play":
+                node, abs_path = action[1], action[2]
+                dc._menu_stack = list(abs_path[:-1])
+                if node.kind is NodeKind.VIDEO:
+                    if self.led_controller:
+                        await self.led_controller.video_playing_indicator(button_id)
+                    await self._show_countdown(button_id)
+                    video_path = Path(self.settings.media.videos_dir) / node.file
+                    await dc.play_video(str(video_path))
+                elif node.kind is NodeKind.PDF:
+                    pdf_path = Path(self.settings.media.pictures_dir) / node.file
+                    await dc.play_pdf(str(pdf_path))
+                elif node.kind is NodeKind.PICTURESET:
+                    await dc.play_pictureset(node)
+            elif op == "drill":
+                await dc.show_submenu(action[1])
+            elif op == "next":
+                dc.sub_menu.next_page()
+                dc.sub_menu.draw()
                 dc.reset_menu_timeout()
-                dc.item_menu.draw()
-                return
-            if choice[0] == 'back_to_topics':
-                await dc.show_category_menu()
-                return
-            if choice[0] == 'play':
-                _, item, idx = choice
-                resolved = self.store.resolve_item_path(dc.item_menu.cat_id, idx)
-                if not resolved:
-                    logger.warning(f"Item file missing on disk: {item.file}")
-                    return
-                if self.led_controller:
-                    await self.led_controller.video_playing_indicator(button_id)
-                await self._show_countdown(button_id)
-                # Route by file extension: PDFs play page-by-page in pygame,
-                # videos hand off to mpv.
-                if resolved.lower().endswith('.pdf'):
-                    await dc.play_pdf(resolved)
+            elif op == "back":
+                await dc.go_back_one_level()
+            # "noop": ignore
+            return
+
+        # --- PICTURESET PLAYBACK --------------------------------------
+        if mode == DisplayMode.PICTURESET:
+            if button_id == 4:
+                await dc.stop_pictureset()
+                if dc._menu_stack:
+                    await dc.show_submenu(dc._menu_stack)
                 else:
-                    await dc.play_video(resolved)
-                return
-            # 'noop' — empty slot or no items
+                    await dc.show_category_menu()
+            # buttons 1-3 ignored during picture-set playback
             return
 
     def _is_shutdown_combo(self) -> bool:

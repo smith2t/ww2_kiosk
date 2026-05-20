@@ -7,7 +7,9 @@ from pathlib import Path
 from .video_player import VideoPlayer
 from .pdf_player import PdfPlayer
 from .slideshow import Slideshow
-from .menu import CategoryMenu, ItemMenu
+from .menu import CategoryMenu, SubMenu
+from .topic_slideshow import TopicSlideshow
+from src.input.category_store import NodeKind
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +17,9 @@ logger = logging.getLogger(__name__)
 class DisplayMode(Enum):
     SLIDESHOW = "slideshow"
     CATEGORY_MENU = "category_menu"
-    ITEM_MENU = "item_menu"
+    SUBMENU = "submenu"
     VIDEO = "video"
+    PICTURESET = "pictureset"
     IDLE = "idle"
 
 
@@ -32,7 +35,9 @@ class DisplayController:
         self.pdf_player = PdfPlayer(settings)
         self.slideshow = Slideshow(settings)
         self.category_menu = CategoryMenu(settings, store) if store else None
-        self.item_menu = ItemMenu(settings, store) if store else None
+        self.sub_menu = SubMenu(settings, store) if store else None
+        self.topic_slideshow = TopicSlideshow(settings)
+        self._menu_stack: list = []
 
         self.idle_timeout = settings.display.idle_timeout
 
@@ -54,8 +59,9 @@ class DisplayController:
         await self.slideshow.initialize()
         if self.category_menu:
             await self.category_menu.initialize(screen=self.slideshow.screen)
-        if self.item_menu:
-            await self.item_menu.initialize(screen=self.slideshow.screen)
+        if self.sub_menu:
+            await self.sub_menu.initialize(screen=self.slideshow.screen)
+        await self.topic_slideshow.initialize(screen=self.slideshow.screen)
 
     async def start_slideshow(self):
         """Start the picture slideshow"""
@@ -81,22 +87,35 @@ class DisplayController:
         self.menu_shown_at = time.time()
         self.category_menu.draw()
 
-    async def show_item_menu(self, cat_id):
-        """Switch to the per-category item menu."""
-        if self.item_menu is None:
-            logger.warning("show_item_menu called but no store available")
+    async def show_submenu(self, path):
+        """Open the menu at `path` (e.g. [1] or [1, 0]). Pushes the path so
+        Back can pop one level at a time.
+        """
+        if self.sub_menu is None:
+            logger.warning("show_submenu called but no store available")
             return
         if self.store is not None:
             self.store.load()
-        logger.info(f"Showing item menu for category {cat_id}")
-        # Slideshow already stopped if we came from the category menu, but
-        # cover the slideshow->item-menu jump-in case too.
+        logger.info(f"Showing submenu at path {path}")
         if self.current_mode == DisplayMode.SLIDESHOW:
             await self.slideshow.stop()
-        self.item_menu.open(cat_id)
-        self.current_mode = DisplayMode.ITEM_MENU
+        self._menu_stack = list(path)
+        self.sub_menu.open(self._menu_stack)
+        self.current_mode = DisplayMode.SUBMENU
         self.menu_shown_at = time.time()
-        self.item_menu.draw()
+        self.sub_menu.draw()
+
+    async def go_back_one_level(self):
+        """Pop one level off the menu stack. If at root, show the category menu."""
+        if len(self._menu_stack) > 1:
+            self._menu_stack.pop()
+            self.sub_menu.open(self._menu_stack)
+            self.current_mode = DisplayMode.SUBMENU
+            self.menu_shown_at = time.time()
+            self.sub_menu.draw()
+        else:
+            self._menu_stack = []
+            await self.show_category_menu()
 
     def reset_menu_timeout(self):
         """Called when a menu redraws after a 'Next' press, to keep it open."""
@@ -105,7 +124,7 @@ class DisplayController:
     def menu_expired(self) -> bool:
         # Read from settings each call so /settings edits take effect live.
         timeout = getattr(self.settings.display, 'menu_timeout_sec', 30)
-        return (self.current_mode in (DisplayMode.CATEGORY_MENU, DisplayMode.ITEM_MENU)
+        return (self.current_mode in (DisplayMode.CATEGORY_MENU, DisplayMode.SUBMENU)
                 and time.time() - self.menu_shown_at > timeout)
         
     async def play_video(self, video_path):
@@ -148,14 +167,27 @@ class DisplayController:
         # post-play return-to-menu logic runs after it finishes.
         self._end_handler_task = asyncio.create_task(self._pdf_play_handler(pdf_path))
 
+    async def play_pictureset(self, leaf):
+        """Begin auto-advancing picture-set playback."""
+        logger.info(f"Playing pictureset: {leaf.title}")
+        if self.current_mode == DisplayMode.SLIDESHOW:
+            await self.slideshow.stop()
+        self.current_mode = DisplayMode.PICTURESET
+        self.last_activity = time.time()
+        self.topic_slideshow.open(leaf)
+        await self.topic_slideshow.start()
+
+    async def stop_pictureset(self):
+        await self.topic_slideshow.stop()
+
     async def _pdf_play_handler(self, pdf_path):
         await self.pdf_player.play(pdf_path)
         logger.info("PDF playback completed")
         self.last_activity = time.time()
         # No wmctrl raise needed — we never left the pygame window.
         await asyncio.sleep(0.5)
-        if self.item_menu is not None and self.item_menu.cat_id is not None:
-            await self.show_item_menu(self.item_menu.cat_id)
+        if self._menu_stack:
+            await self.show_submenu(self._menu_stack)
         else:
             await self.start_slideshow()
 
@@ -190,8 +222,8 @@ class DisplayController:
         # If we know which category the video came from, surface that menu
         # again so the visitor can pick another item without going all the
         # way back to slideshow.
-        if self.item_menu is not None and self.item_menu.cat_id is not None:
-            await self.show_item_menu(self.item_menu.cat_id)
+        if self._menu_stack:
+            await self.show_submenu(self._menu_stack)
         else:
             await self.start_slideshow()
         
@@ -208,4 +240,5 @@ class DisplayController:
         logger.info("Cleaning up display controller")
         
         await self.video_player.cleanup()
+        await self.topic_slideshow.stop()
         await self.slideshow.cleanup()
