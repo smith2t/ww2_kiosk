@@ -112,3 +112,29 @@ def ensure_thumbnail(media_path: Path) -> Optional[Path]:
     except Exception as e:
         logger.error(f"thumbnail generation failed for {media_path}: {e}")
         return None
+
+
+def compose_pictureset_thumbnail(picture_paths, out_path: Path) -> Optional[Path]:
+    """Compose a 2x2 mini-grid of the first 4 picture thumbnails into out_path.
+
+    If fewer than 4 pictures, empty quadrants stay black. Returns out_path on
+    success, None on failure.
+    """
+    out_path = Path(out_path)
+    try:
+        cell_w, cell_h = THUMB_SIZE[0] // 2, THUMB_SIZE[1] // 2
+        canvas = Image.new("RGB", THUMB_SIZE, (0, 0, 0))
+        slots = [(0, 0), (cell_w, 0), (0, cell_h), (cell_w, cell_h)]
+        for slot_xy, src in zip(slots, list(picture_paths)[:4]):
+            tile_thumb = ensure_thumbnail(Path(src))
+            if tile_thumb is None:
+                continue
+            with Image.open(tile_thumb) as t:
+                t = t.resize((cell_w, cell_h), Image.Resampling.LANCZOS)
+                canvas.paste(t, slot_xy)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        canvas.save(out_path, format="PNG")
+        return out_path
+    except Exception as e:
+        logger.error(f"pictureset thumbnail failed: {e}")
+        return None

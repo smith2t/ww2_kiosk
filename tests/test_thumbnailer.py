@@ -100,3 +100,34 @@ def test_video_thumbnail_failure_returns_none(media_root):
     src.write_text("this is not a valid video file")
     thumb = ensure_thumbnail(src)
     assert thumb is None
+
+
+from src.media.thumbnailer import compose_pictureset_thumbnail
+
+
+def test_pictureset_thumbnail_composed(media_root):
+    pics_dir = media_root / "pictures"
+    pics_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i, color in enumerate([(255,0,0), (0,255,0), (0,0,255), (255,255,0)]):
+        p = pics_dir / f"pic{i}.jpg"
+        _write_image(p, color=color)
+        paths.append(p)
+
+    out = pics_dir / "grid.png"
+    result = compose_pictureset_thumbnail(paths, out)
+    assert result == out
+    assert out.exists()
+    with Image.open(out) as t:
+        assert t.size == THUMB_SIZE
+
+
+def test_pictureset_thumbnail_handles_short_list(media_root):
+    pics_dir = media_root / "pictures"
+    pics_dir.mkdir(parents=True, exist_ok=True)
+    p = pics_dir / "only.jpg"
+    _write_image(p)
+    out = pics_dir / "grid_one.png"
+    result = compose_pictureset_thumbnail([p], out)
+    assert result == out
+    assert out.exists()
