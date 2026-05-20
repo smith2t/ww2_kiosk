@@ -145,11 +145,17 @@ class _MenuBase:
 
 
 class CategoryMenu(_MenuBase):
-    """Top-level menu: 4 colored tiles, one per category."""
+    """Top-level menu: up to 4 colored tiles, one per root slot.
+    Slots that are None are not drawn — visitors see only configured tiles.
+    """
 
     def __init__(self, settings, store):
         super().__init__(settings)
         self.store = store
+
+    def lit_slots(self):
+        """Return the list of button ids (1-4) that have a defined node."""
+        return [int(s) for s, n in self.store.root_slots().items() if n is not None]
 
     def draw(self):
         if self.screen is None:
@@ -159,13 +165,18 @@ class CategoryMenu(_MenuBase):
         sw, sh = self._draw_chrome("Choose a topic",
                                    "Press a colored button to browse")
         cells = self._layout_2x2(sw, sh)
-        for cat, (x, y, w, h) in zip(self.store.all_categories(), cells):
-            color = COLORS[int(cat.cat_id)][1]
-            label = COLORS[int(cat.cat_id)][0]
-            body = cat.title or "(untitled)"
-            if not cat.items:
+        for slot_id_str, (x, y, w, h) in zip(("1", "2", "3", "4"), cells):
+            node = self.store.root_slots().get(slot_id_str)
+            if node is None:
+                continue   # hide tile entirely
+            button_id = int(slot_id_str)
+            color = COLORS[button_id][1]
+            label = COLORS[button_id][0]
+            body = node.title or "(untitled)"
+            kind = node.kind.value
+            if kind == "category" and not node.children:
                 body = f"{body}\n(no items yet)"
-            self._draw_tile(x, y, w, h, color, label, body)
+            self._draw_tile(x, y, w, h, color, label, body, kind=kind)
         pygame.display.flip()
 
 
