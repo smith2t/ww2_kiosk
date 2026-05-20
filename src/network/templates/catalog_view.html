@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Catalog — {{ node.title or 'Edit' }}</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; margin: 2em; }
+    nav.crumbs { margin-bottom: 1em; font-size: 1.1em; }
+    nav.crumbs a { color: #2563eb; text-decoration: none; }
+    nav.crumbs .sep { color: #aaa; margin: 0 .5em; }
+    .child { border: 1px solid #ccc; border-radius: 10px; padding: 1em;
+             margin: .8em 0; display: flex; gap: 1em; align-items: center; }
+    .thumb { width: 160px; height: 90px; background: #222; object-fit: cover; border-radius: 6px; }
+    .meta { flex: 1; }
+    label { display: inline-block; width: 80px; color: #555; }
+    input[type=text] { width: 60%; padding: .3em; }
+    select { padding: .3em; }
+    button, .btn { padding: .4em .8em; border-radius: 6px; border: 0; cursor: pointer;
+                   text-decoration: none; }
+    .primary { background: #2563eb; color: #fff; }
+    .danger  { background: #b00; color: #fff; }
+    .add-row { background: #f5f5f5; padding: 1em; border-radius: 8px; margin-top: 2em; }
+    .empty { color: #999; font-style: italic; }
+  </style>
+</head>
+<body>
+  <nav class="crumbs">
+    <a href="/settings/catalog">Home</a>
+    {% for label, link in breadcrumbs %}
+      <span class="sep">&rsaquo;</span>
+      {% if link %}<a href="{{ link }}">{{ label }}</a>{% else %}{{ label }}{% endif %}
+    {% endfor %}
+  </nav>
+
+  <h1>{{ node.title or '(untitled)' }} <small>[{{ node.kind.value }}]</small></h1>
+
+  <form method="post" action="/settings/catalog/{{ path_str }}/save">
+    <p><label>Title:</label>
+      <input type="text" name="title" value="{{ node.title or '' }}"></p>
+    {% if node.kind.value in ('video','pdf') %}
+      <p><label>File:</label>
+        <input type="text" name="file" value="{{ node.file or '' }}"></p>
+    {% endif %}
+    {% if node.kind.value == 'pictureset' %}
+      <p><label>Interval (sec):</label>
+        <input type="number" name="interval_sec" value="{{ node.interval_sec }}" min="3" max="60"></p>
+      <p><label>Files (one per line):</label><br>
+        <textarea name="files" rows="6" cols="50">{{ node.files|join('\n') }}</textarea></p>
+      <p><label>Captions (one per line, blank line for none):</label><br>
+        <textarea name="captions" rows="6" cols="50">{{ node.captions|join('\n') }}</textarea></p>
+    {% endif %}
+    <p><button class="primary" type="submit">Save</button></p>
+  </form>
+
+  {% if node.kind.value == 'category' %}
+    <h2>Children</h2>
+    {% if not node.children %}
+      <p class="empty">No children yet — add one below.</p>
+    {% endif %}
+    {% for child, child_path in zip(node.children, child_paths) %}
+      <div class="child">
+        {% if child.thumb_url %}
+          <img class="thumb" src="{{ child.thumb_url }}" alt="">
+        {% else %}
+          <div class="thumb" title="no thumbnail"></div>
+        {% endif %}
+        <div class="meta">
+          <strong>{{ child.title or '(untitled)' }}</strong>
+          <span style="color:#888">[{{ child.kind.value }}]</span><br>
+          {% if child.file %}<small>{{ child.file }}</small>{% endif %}
+        </div>
+        <div>
+          <a class="btn primary" href="/settings/catalog/{{ child_path }}">Edit</a>
+          <form method="post" action="/settings/catalog/{{ child_path }}/delete"
+                style="display:inline"
+                onsubmit="return confirm('Delete this entry and any children?');">
+            <button class="danger" type="submit">Delete</button>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
+
+    <div class="add-row">
+      <form method="post" action="/settings/catalog/{{ path_str }}/add-child">
+        <label>Add child:</label>
+        <select name="kind">
+          <option value="video">Video</option>
+          <option value="pdf">PDF</option>
+          <option value="pictureset">Picture-set</option>
+          {% if can_add_subcategory %}<option value="category">Sub-category</option>{% endif %}
+        </select>
+        <input type="text" name="title" placeholder="Title" required>
+        <input type="text" name="file" placeholder="filename.mp4 (for video/PDF)">
+        <button class="primary" type="submit">Add</button>
+      </form>
+      {% if not can_add_subcategory %}
+        <p><em>Sub-categories disabled at this depth (max 3 levels).</em></p>
+      {% endif %}
+    </div>
+  {% endif %}
+</body>
+</html>

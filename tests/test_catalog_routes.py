@@ -57,3 +57,31 @@ def test_catalog_root_links_to_drilldown(app_with_store):
         r = c.get("/settings/catalog")
         body = r.data.decode()
         assert "/settings/catalog/1" in body
+
+
+def test_catalog_drilldown_shows_breadcrumb_and_children(app_with_store):
+    app, _ = app_with_store
+    with app.test_client() as c:
+        r = c.get("/settings/catalog/1")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "EU" in body
+        assert "D-Day" in body
+        assert "Home" in body
+
+
+def test_catalog_drilldown_handles_leaf_path(app_with_store):
+    app, _ = app_with_store
+    with app.test_client() as c:
+        r = c.get("/settings/catalog/3")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "Midway" in body
+        assert "midway.mp4" in body
+
+
+def test_catalog_drilldown_invalid_path_returns_404(app_with_store):
+    app, _ = app_with_store
+    with app.test_client() as c:
+        r = c.get("/settings/catalog/1/99")
+        assert r.status_code == 404

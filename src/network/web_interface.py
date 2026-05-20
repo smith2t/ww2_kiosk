@@ -305,6 +305,64 @@ class WebInterface:
                               colors[slot_id]))
             return render_template("catalog_root.html", slots=slots)
 
+        @self.app.route("/settings/catalog/<path:catalog_path>")
+        def settings_catalog_view(catalog_path):
+            from flask import render_template, abort
+            from src.input.category_store import parse_path, format_path
+            from src.media.thumbnailer import ensure_thumbnail
+            try:
+                path = parse_path(catalog_path)
+            except ValueError:
+                abort(404)
+            node = self.store.resolve(path)
+            if node is None:
+                abort(404)
+
+            breadcrumbs = []
+            for i in range(1, len(path) + 1):
+                ancestor = self.store.resolve(path[:i])
+                label = ancestor.title if ancestor else f"slot {path[0]}"
+                link = (f"/settings/catalog/{format_path(path[:i])}"
+                        if i < len(path) else None)
+                breadcrumbs.append((label, link))
+
+            child_paths = []
+            for i, child in enumerate(getattr(node, 'children', []) or []):
+                child_paths.append(format_path(path + [i]))
+                if child.kind.value in ("video", "pdf"):
+                    full = self._resolve_media_path(child.file)
+                    if full:
+                        ensure_thumbnail(full)
+                        child.thumb_url = f"/thumb/{child.file}"
+                    else:
+                        child.thumb_url = None
+                elif child.kind.value == "pictureset" and child.files:
+                    child.thumb_url = f"/pictureset-thumb/{format_path(path + [i])}"
+                else:
+                    child.thumb_url = None
+
+            return render_template(
+                "catalog_view.html",
+                node=node,
+                path_str=format_path(path),
+                breadcrumbs=breadcrumbs,
+                child_paths=child_paths,
+                can_add_subcategory=(len(path) < 2),
+                zip=zip,
+            )
+
+        @self.app.route("/thumb/<path:basename>")
+        def serve_thumb(basename):
+            from flask import send_file, abort
+            from src.media.thumbnailer import ensure_thumbnail
+            full = self._resolve_media_path(basename)
+            if full is None:
+                abort(404)
+            thumb = ensure_thumbnail(full)
+            if thumb is None or not thumb.exists():
+                abort(404)
+            return send_file(thumb, mimetype="image/png")
+
         @self.app.route('/api/status')
         def api_status():
             """API endpoint for kiosk status"""
@@ -314,6 +372,15 @@ class WebInterface:
                 'video_count': len(list(self.video_dir.glob('*'))),
                 'uptime': '24h'  # TODO: Calculate actual uptime
             })
+
+    def _resolve_media_path(self, basename):
+        from pathlib import Path
+        for d in (self.settings.media.videos_dir,
+                  self.settings.media.pictures_dir):
+            p = Path(d) / basename
+            if p.exists():
+                return p
+        return None
 
     def _load_categories(self) -> dict:
         """Read categories.json — keyed by '1'..'4', each {title, items[]}.
