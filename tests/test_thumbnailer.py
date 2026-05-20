@@ -72,3 +72,31 @@ def test_pdf_thumbnail_generated(media_root):
     assert thumb.exists()
     with Image.open(thumb) as t:
         assert t.size == THUMB_SIZE
+
+
+import shutil
+
+
+def test_video_thumbnail_generated(media_root):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed in this environment")
+    src = media_root / "videos" / "clip.mp4"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    import subprocess
+    subprocess.run([
+        "ffmpeg", "-y", "-f", "lavfi", "-i",
+        "testsrc=duration=1:size=320x180:rate=30",
+        "-pix_fmt", "yuv420p", str(src),
+    ], check=True, capture_output=True)
+
+    thumb = ensure_thumbnail(src)
+    assert thumb is not None
+    assert thumb.exists()
+
+
+def test_video_thumbnail_failure_returns_none(media_root):
+    src = media_root / "videos" / "not_a_video.mp4"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("this is not a valid video file")
+    thumb = ensure_thumbnail(src)
+    assert thumb is None

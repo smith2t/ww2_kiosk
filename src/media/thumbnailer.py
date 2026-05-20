@@ -2,6 +2,7 @@
 import hashlib
 import logging
 import os
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +33,9 @@ def _cache_path(media_path: Path) -> Path:
 
 def _is_image(p: Path) -> bool:
     return p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
+
+
+VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
 
 
 def _thumbnail_image(src: Path, dst: Path) -> None:
@@ -65,6 +69,22 @@ def _thumbnail_pdf(src: Path, dst: Path) -> None:
         doc.close()
 
 
+def _thumbnail_video(src: Path, dst: Path) -> None:
+    """Grab a frame ~0.1s into the clip, scaled to THUMB_SIZE."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(src),
+        "-ss", "0.1",
+        "-frames:v", "1",
+        "-vf", f"scale={THUMB_SIZE[0]}:{THUMB_SIZE[1]}:force_original_aspect_ratio=decrease,"
+               f"pad={THUMB_SIZE[0]}:{THUMB_SIZE[1]}:x=(ow-iw)/2:y=(oh-ih)/2:color=black",
+        str(dst),
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=30)
+    if result.returncode != 0 or not dst.exists():
+        raise RuntimeError(f"ffmpeg failed: {result.stderr.decode(errors='replace')[:200]}")
+
+
 def ensure_thumbnail(media_path: Path) -> Optional[Path]:
     """Return cached thumbnail PNG, generating it if missing or stale.
 
@@ -83,6 +103,8 @@ def ensure_thumbnail(media_path: Path) -> Optional[Path]:
             _thumbnail_image(media_path, dst)
         elif ext == ".pdf":
             _thumbnail_pdf(media_path, dst)
+        elif ext in VIDEO_EXTS:
+            _thumbnail_video(media_path, dst)
         else:
             logger.info(f"no thumbnailer yet for {ext}")
             return None
