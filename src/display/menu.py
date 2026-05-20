@@ -15,6 +15,16 @@ import pygame
 
 logger = logging.getLogger(__name__)
 
+# Badge glyphs for tile kind indicators
+BADGE_GLYPHS = {
+    "category":   "›",   # ›
+    "video":      "▶",   # ▶
+    "pdf":        "\U0001F4C4",  # 📄
+    "pictureset": "\U0001F5BC",  # 🖼
+    "nav_back":   "←",   # ←
+    "nav_next":   "→",   # →
+}
+
 # Button id -> (label, RGB color). Stays consistent across both menu levels
 # so the visitor associates a fixed color with each physical button.
 COLORS = {
@@ -37,6 +47,7 @@ class _MenuBase:
         self.screen = None
         self.fonts = {}
         self._desc_fonts: dict = {}
+        self._badge_font = None   # init lazily in initialize()
 
     async def initialize(self, screen=None):
         self.screen = screen or pygame.display.get_surface()
@@ -47,9 +58,10 @@ class _MenuBase:
         }
         self._desc_fonts = {sz: pygame.font.SysFont('Arial', sz, bold=True)
                             for sz in (96, 80, 72, 64, 56, 48, 40, 36, 32)}
+        self._badge_font = pygame.font.SysFont("DejaVu Sans", 30, bold=True)
 
     # --- shared helpers ---------------------------------------------------
-    def _draw_tile(self, x, y, w, h, color, label_text, body_text):
+    def _draw_tile(self, x, y, w, h, color, label_text, body_text, kind=None):
         rect = pygame.Rect(x, y, w, h)
         pygame.draw.rect(self.screen, color, rect, border_radius=20)
         pygame.draw.rect(self.screen, (255, 255, 255), rect, width=4, border_radius=20)
@@ -58,24 +70,27 @@ class _MenuBase:
             label = self.fonts['color'].render(label_text, True, (255, 255, 255))
             self.screen.blit(label, label.get_rect(midtop=(x + w // 2, y + 16)))
 
-        # Body text with shrink-to-fit + word wrap.
         pad_x = 30
         text_top = (y + 16 + 48) if label_text else (y + 24)
         text_bottom = y + h - 24
         text_w = w - 2 * pad_x
         text_h = text_bottom - text_top
-        if text_h <= 0 or text_w <= 0:
-            return
+        if text_h > 0 and text_w > 0:
+            body_text = body_text or "—"
+            font, wrapped = self._fit_text(body_text, text_w, text_h)
+            line_height = font.get_linesize()
+            block_h = line_height * len(wrapped)
+            cur_y = text_top + max(0, (text_h - block_h) // 2)
+            for line in wrapped:
+                ls = font.render(line, True, (255, 255, 255))
+                self.screen.blit(ls, ls.get_rect(midtop=(x + w // 2, cur_y)))
+                cur_y += line_height
 
-        body_text = body_text or "—"
-        font, wrapped = self._fit_text(body_text, text_w, text_h)
-        line_height = font.get_linesize()
-        block_h = line_height * len(wrapped)
-        cur_y = text_top + max(0, (text_h - block_h) // 2)
-        for line in wrapped:
-            ls = font.render(line, True, (255, 255, 255))
-            self.screen.blit(ls, ls.get_rect(midtop=(x + w // 2, cur_y)))
-            cur_y += line_height
+        # Kind badge in the top-right corner
+        if kind and kind in BADGE_GLYPHS and self._badge_font is not None:
+            glyph = BADGE_GLYPHS[kind]
+            badge = self._badge_font.render(glyph, True, (255, 255, 255))
+            self.screen.blit(badge, badge.get_rect(topright=(x + w - 14, y + 14)))
 
     def _fit_text(self, text, max_w, max_h):
         for size in sorted(self._desc_fonts.keys(), reverse=True):
