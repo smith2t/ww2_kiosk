@@ -210,3 +210,66 @@ def test_save_then_load_roundtrip(tmp_path):
     assert eu.title == "EU"
     assert len(eu.children) == 1
     assert eu.children[0].file == "dday.mp4"
+
+
+def test_migrate_v1_categories_to_v2(tmp_path):
+    s = _settings(tmp_path)
+    cfg = Path(s.config.button_mappings_file).parent / "categories.json"
+    cfg.write_text(json.dumps({
+        "categories": {
+            "1": {"title": "European", "items": [
+                {"file": "dday.mp4", "title": "D-Day"},
+                {"file": "maps.pdf", "title": "Maps"},
+            ]},
+            "2": {"title": "Pacific", "items": []},
+            "3": {"title": "Cat3", "items": [
+                {"file": "midway.mp4", "title": "Midway"}]},
+            "4": {"title": "Cat4", "items": []},
+        },
+    }))
+    store = CategoryStore(s)
+
+    eu = store.get_root_slot(1)
+    assert eu is not None
+    assert eu.kind.value == "category"
+    assert eu.title == "European"
+    assert [c.file for c in eu.children] == ["dday.mp4", "maps.pdf"]
+    assert [c.kind.value for c in eu.children] == ["video", "pdf"]
+
+    assert store.get_root_slot(2) is None
+    assert store.get_root_slot(3).children[0].file == "midway.mp4"
+    assert store.get_root_slot(4) is None
+
+
+def test_migration_writes_backup_and_v2_file(tmp_path):
+    s = _settings(tmp_path)
+    cfg = Path(s.config.button_mappings_file).parent / "categories.json"
+    bak = Path(s.config.button_mappings_file).parent / "categories.v1.bak.json"
+    cfg.write_text(json.dumps({"categories": {
+        "1": {"title": "X", "items": [{"file": "a.mp4", "title": "A"}]},
+    }}))
+
+    CategoryStore(s)
+
+    assert bak.exists()
+    assert json.loads(bak.read_text())["categories"]["1"]["title"] == "X"
+    assert json.loads(cfg.read_text())["version"] == 2
+
+
+def test_migrate_button_mappings_when_no_categories_file(tmp_path):
+    s = _settings(tmp_path)
+    legacy = Path(s.config.button_mappings_file)
+    legacy.write_text(json.dumps({
+        "mappings": {"1": "dday.mp4", "2": "", "3": "midway.mp4", "4": ""},
+        "descriptions": {"1": "D-Day", "2": "", "3": "Midway", "4": ""},
+    }))
+
+    store = CategoryStore(s)
+
+    s1 = store.get_root_slot(1)
+    assert s1.kind.value == "category"
+    assert s1.title == "D-Day"
+    assert s1.children[0].file == "dday.mp4"
+    assert store.get_root_slot(2) is None
+    assert store.get_root_slot(3).children[0].file == "midway.mp4"
+    assert store.get_root_slot(4) is None

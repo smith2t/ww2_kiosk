@@ -221,14 +221,59 @@ class CategoryStore:
         logger.info(f"Loaded v2 catalog from {self.path}")
 
     def _load_legacy(self, data: dict) -> None:
-        # Filled in by Task 4. Placeholder so load() doesn't crash.
-        self._tree = {s: None for s in ("1","2","3","4")}
-        logger.warning("Legacy v1 categories.json detected — migration not yet implemented")
+        """Migrate v1 categories.json (flat items per category) -> v2 tree."""
+        backup = self.path.parent / "categories.v1.bak.json"
+        try:
+            backup.write_text(self.path.read_text())
+        except Exception as e:
+            logger.warning(f"Could not write v1 backup: {e}")
+
+        v1_cats = (data or {}).get("categories", {}) or {}
+        new: dict[str, Optional[Node]] = {}
+        for slot in ("1", "2", "3", "4"):
+            raw = v1_cats.get(slot) or {}
+            items = raw.get("items") or []
+            if not items:
+                new[slot] = None
+                continue
+            children = []
+            for it in items:
+                f = str(it.get("file", ""))
+                if not f:
+                    continue
+                kind = NodeKind.PDF if f.lower().endswith(".pdf") else NodeKind.VIDEO
+                children.append(Node(kind=kind, title=str(it.get("title", "")),
+                                     file=f))
+            if not children:
+                new[slot] = None
+            else:
+                new[slot] = Node(kind=NodeKind.CATEGORY,
+                                 title=str(raw.get("title", f"Category {slot}")),
+                                 children=children)
+        self._tree = new
+        self.save()
+        logger.info(f"Migrated v1 categories.json -> v2 (backup at {backup})")
 
     def _load_button_mappings(self) -> None:
-        # Filled in by Task 4.
-        self._tree = {s: None for s in ("1","2","3","4")}
-        logger.warning("Legacy button_mappings.json detected — migration not yet implemented")
+        """Migrate the very-old button_mappings.json to v2."""
+        data = json.loads(self.legacy_path.read_text())
+        mappings = data.get("mappings", {}) or {}
+        descriptions = data.get("descriptions", {}) or {}
+        new: dict[str, Optional[Node]] = {}
+        for slot in ("1", "2", "3", "4"):
+            f = (mappings.get(slot) or "").strip()
+            desc = (descriptions.get(slot) or "").strip()
+            if not f:
+                new[slot] = None
+                continue
+            kind = NodeKind.PDF if f.lower().endswith(".pdf") else NodeKind.VIDEO
+            leaf = Node(kind=kind, title=desc, file=f)
+            new[slot] = Node(kind=NodeKind.CATEGORY,
+                             title=desc or f"Category {slot}",
+                             children=[leaf])
+        self._tree = new
+        self.save()
+        logger.info("Migrated button_mappings.json -> v2 categories.json")
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
