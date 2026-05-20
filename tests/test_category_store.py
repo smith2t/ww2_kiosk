@@ -273,3 +273,111 @@ def test_migrate_button_mappings_when_no_categories_file(tmp_path):
     assert store.get_root_slot(2) is None
     assert store.get_root_slot(3).children[0].file == "midway.mp4"
     assert store.get_root_slot(4) is None
+
+
+def _seeded_store(tmp_path):
+    s = _settings(tmp_path)
+    store = CategoryStore(s)
+    store._tree = {
+        "1": Node(kind=NodeKind.CATEGORY, title="EU", children=[
+            Node(kind=NodeKind.CATEGORY, title="Air", children=[
+                Node(kind=NodeKind.VIDEO, title="BoB", file="bob.mp4"),
+            ]),
+            Node(kind=NodeKind.VIDEO, title="D-Day", file="dday.mp4"),
+        ]),
+        "2": None, "3": None, "4": None,
+    }
+    return store
+
+
+def test_resolve_root(tmp_path):
+    store = _seeded_store(tmp_path)
+    assert store.resolve([1]).title == "EU"
+    assert store.resolve([2]) is None
+
+
+def test_resolve_deeper(tmp_path):
+    store = _seeded_store(tmp_path)
+    assert store.resolve([1, 0]).title == "Air"
+    assert store.resolve([1, 0, 0]).title == "BoB"
+    assert store.resolve([1, 1]).title == "D-Day"
+
+
+def test_resolve_out_of_range(tmp_path):
+    store = _seeded_store(tmp_path)
+    assert store.resolve([1, 99]) is None
+    assert store.resolve([1, 0, 99]) is None
+
+
+def test_resolve_empty_path_is_none(tmp_path):
+    """Root has no Node — the tree as a whole isn't a Node."""
+    store = _seeded_store(tmp_path)
+    assert store.resolve([]) is None
+
+
+def test_replace_root_slot(tmp_path):
+    store = _seeded_store(tmp_path)
+    new = Node(kind=NodeKind.VIDEO, title="Midway", file="midway.mp4")
+    store.replace_node([3], new)
+    assert store.get_root_slot(3).file == "midway.mp4"
+
+
+def test_replace_root_slot_with_none_clears(tmp_path):
+    store = _seeded_store(tmp_path)
+    store.replace_node([1], None)
+    assert store.get_root_slot(1) is None
+
+
+def test_add_child(tmp_path):
+    store = _seeded_store(tmp_path)
+    new = Node(kind=NodeKind.PDF, title="Maps", file="maps.pdf")
+    store.add_child([1], new)
+    eu = store.get_root_slot(1)
+    assert len(eu.children) == 3
+    assert eu.children[-1].file == "maps.pdf"
+
+
+def test_add_child_rejects_under_leaf(tmp_path):
+    store = _seeded_store(tmp_path)
+    new = Node(kind=NodeKind.VIDEO, title="X", file="x.mp4")
+    with pytest.raises(ValueError, match="not a category"):
+        store.add_child([1, 1], new)
+
+
+def test_depth_limit_enforced(tmp_path):
+    store = _seeded_store(tmp_path)
+    deep_cat = Node(kind=NodeKind.CATEGORY, title="Too Deep", children=[])
+    with pytest.raises(ValueError, match="depth"):
+        store.add_child([1, 0], deep_cat)
+    # A leaf at depth 3 is fine
+    store.add_child([1, 0], Node(kind=NodeKind.VIDEO, title="X", file="x.mp4"))
+
+
+def test_reorder_children(tmp_path):
+    store = _seeded_store(tmp_path)
+    store.add_child([1], Node(kind=NodeKind.PDF, title="C", file="c.pdf"))
+    store.reorder_children([1], [2, 0, 1])
+    eu = store.get_root_slot(1)
+    assert [c.title for c in eu.children] == ["C", "Air", "D-Day"]
+
+
+def test_reorder_rejects_bad_permutation(tmp_path):
+    store = _seeded_store(tmp_path)
+    with pytest.raises(ValueError, match="permutation"):
+        store.reorder_children([1], [0, 0])
+    with pytest.raises(ValueError, match="permutation"):
+        store.reorder_children([1], [0])
+
+
+def test_delete_child(tmp_path):
+    store = _seeded_store(tmp_path)
+    store.delete_node([1, 0])
+    eu = store.get_root_slot(1)
+    assert len(eu.children) == 1
+    assert eu.children[0].title == "D-Day"
+
+
+def test_delete_root_slot_is_replace_with_none(tmp_path):
+    store = _seeded_store(tmp_path)
+    store.delete_node([1])
+    assert store.get_root_slot(1) is None

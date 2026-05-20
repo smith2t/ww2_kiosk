@@ -288,3 +288,108 @@ class CategoryStore:
         tmp.write_text(json.dumps(payload, indent=2))
         os.replace(tmp, self.path)
         logger.info(f"Saved {self.path}")
+
+    # ================ Tree Mutation API ================
+
+    MAX_DEPTH = 3   # root → cat → cat → leaf
+
+    # --------- traversal ---------
+
+    def resolve(self, path: List[int]) -> Optional[Node]:
+        """Resolve a path (list of ints) to the Node at that path, or None."""
+        if not path:
+            return None
+        node = self._tree.get(str(path[0]))
+        for idx in path[1:]:
+            if node is None or node.kind is not NodeKind.CATEGORY:
+                return None
+            if idx < 0 or idx >= len(node.children):
+                return None
+            node = node.children[idx]
+        return node
+
+    def _parent_and_index(self, path: List[int]) -> tuple:
+        """Returns (parent_container, child_key)."""
+        if not path:
+            raise ValueError("empty path has no parent")
+        if len(path) == 1:
+            return (self._tree, str(path[0]))
+        parent = self.resolve(path[:-1])
+        if parent is None or parent.kind is not NodeKind.CATEGORY:
+            raise ValueError(f"parent at {format_path(path[:-1])} is not a category")
+        return (parent.children, path[-1])
+
+    # --------- depth validation ---------
+
+    def _node_height(self, n: Optional[Node]) -> int:
+        """Return the maximum depth below this node (1 for leaf, 2+ for parent)."""
+        if n is None:
+            return 0
+        if n.kind is not NodeKind.CATEGORY or not n.children:
+            return 1
+        return 1 + max(self._node_height(c) for c in n.children)
+
+    def _validate_depth(self, path: List[int], new_node: Optional[Node]) -> None:
+        """Check that placing new_node at path doesn't violate MAX_DEPTH."""
+        if new_node is None:
+            return
+        depth_at_path = len(path)
+        # A category at depth MAX_DEPTH has no room for children.
+        if new_node.kind is NodeKind.CATEGORY and depth_at_path >= self.MAX_DEPTH:
+            raise ValueError(
+                f"depth exceeded: placing a category at depth {depth_at_path} "
+                f"leaves no room for children (max {self.MAX_DEPTH})")
+        height = self._node_height(new_node)
+        if depth_at_path + height - 1 > self.MAX_DEPTH:
+            raise ValueError(
+                f"depth exceeded: placing node (height={height}) at depth "
+                f"{depth_at_path} would make tree {depth_at_path + height - 1} "
+                f"levels (max {self.MAX_DEPTH})")
+
+    # --------- mutations ---------
+
+    def replace_node(self, path: List[int], node: Optional[Node]) -> None:
+        """Replace the node at path with node (or None to clear)."""
+        self._validate_depth(path, node)
+        parent, key = self._parent_and_index(path)
+        if isinstance(parent, dict):
+            parent[key] = node
+        else:
+            if node is None:
+                raise ValueError("cannot set a child to None — use delete_node")
+            parent[key] = node
+        self.save()
+
+    def add_child(self, parent_path: List[int], node: Node) -> None:
+        """Add a child to the category at parent_path."""
+        if not parent_path:
+            raise ValueError("cannot add a child at root — use replace_node on a slot")
+        parent = self.resolve(parent_path)
+        if parent is None or parent.kind is not NodeKind.CATEGORY:
+            raise ValueError(f"target {format_path(parent_path)} is not a category")
+        self._validate_depth(parent_path + [len(parent.children)], node)
+        parent.children.append(node)
+        self.save()
+
+    def reorder_children(self, parent_path: List[int],
+                         permutation: List[int]) -> None:
+        """Reorder children of the category at parent_path."""
+        parent = self.resolve(parent_path)
+        if parent is None or parent.kind is not NodeKind.CATEGORY:
+            raise ValueError(f"target {format_path(parent_path)} is not a category")
+        n = len(parent.children)
+        if sorted(permutation) != list(range(n)):
+            raise ValueError(f"permutation {permutation} must be a permutation of 0..{n-1}")
+        parent.children = [parent.children[i] for i in permutation]
+        self.save()
+
+    def delete_node(self, path: List[int]) -> None:
+        """Delete the node at path."""
+        if not path:
+            raise ValueError("cannot delete root")
+        parent, key = self._parent_and_index(path)
+        if isinstance(parent, dict):
+            parent[key] = None
+        else:
+            del parent[key]
+        self.save()
